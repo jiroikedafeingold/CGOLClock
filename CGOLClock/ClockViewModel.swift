@@ -23,11 +23,23 @@ final class ClockViewModel {
     /// the first generation runs, so the time is legible before it decays.
     private let holdDuration = 3.0
 
-    /// Generations per second at the start and end of the evolving part of the
-    /// minute. The curve between them is exponential, which works out to
-    /// roughly 590 generations after the hold.
-    private let fastRate = 30.0
-    private let slowRate = 2.0
+    /// How long the rate takes to climb from `startRate` to `peakRate` once
+    /// the hold ends.
+    private let rampDuration = 6.0
+
+    /// Generations per second through the minute. The rate eases up from
+    /// `startRate` to `peakRate` across `rampDuration`, then decays to
+    /// `endRate` by the end of the minute.
+    ///
+    /// `startRate` is a middle pace rather than a crawl: the first few
+    /// generations are where the solid bars come apart, which is worth seeing,
+    /// but one frame every two-thirds of a second reads as stalled. Works out
+    /// to roughly 270 generations a minute.
+    private let startRate = 5.0
+    private let peakRate = 10.0
+    private let endRate = 1.5
+
+    private static let minuteLength = 60.0
 
     private let renderer = SevenSegmentRenderer()
     private var display: Display?
@@ -130,10 +142,22 @@ final class ClockViewModel {
     private func interval(at date: Date) -> Double {
         let elapsed = secondsIntoMinute(date)
         guard elapsed >= holdDuration else { return holdDuration - elapsed }
+        return 1 / rate(at: elapsed)
+    }
 
-        let progress = min(max((elapsed - holdDuration) / (60 - holdDuration), 0), 1)
-        let rate = fastRate * pow(slowRate / fastRate, progress)
-        return 1 / rate
+    /// Generations per second `elapsed` seconds into the minute.
+    func rate(at elapsed: Double) -> Double {
+        let sinceHold = elapsed - holdDuration
+        guard sinceHold >= rampDuration else {
+            // Smoothstep, so the ramp starts gently rather than lurching.
+            let progress = max(sinceHold / rampDuration, 0)
+            let eased = progress * progress * (3 - 2 * progress)
+            return startRate * pow(peakRate / startRate, eased)
+        }
+
+        let decayWindow = Self.minuteLength - holdDuration - rampDuration
+        let progress = min(max((sinceHold - rampDuration) / decayWindow, 0), 1)
+        return peakRate * pow(endRate / peakRate, progress)
     }
 
     private func secondsIntoMinute(_ date: Date) -> Double {
