@@ -42,7 +42,9 @@ struct ClockView: View {
                 displayScale: displayScale,
                 palette: settings.palette,
                 resolution: settings.resolution,
-                face: settings.face
+                face: settings.face,
+                seedStyle: settings.seedStyle,
+                scatterDensity: settings.scatterDensity
             )
 
             ZStack {
@@ -77,6 +79,12 @@ struct ClockView: View {
         .overlay(alignment: .topTrailing) { settingsButton }
         .background(Color(settings.palette.background).ignoresSafeArea())
         .preferredColorScheme(.dark)
+        // Nothing should compete with the clock; the system clock in the
+        // status bar least of all.
+        .persistentSystemOverlays(.hidden)
+        #if os(iOS)
+        .statusBarHidden()
+        #endif
         .sheet(isPresented: $showsSettings) {
             SettingsView(settings: settings)
         }

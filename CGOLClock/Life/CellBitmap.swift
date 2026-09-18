@@ -53,4 +53,39 @@ nonisolated struct CellBitmap: Equatable {
         words.reduce(0) { $0 + $1.nonzeroBitCount }
     }
 
+    /// Keeps each live cell with probability `density`, dropping the rest.
+    ///
+    /// A solid glyph mostly dies on contact with Life — its interior cells all
+    /// have eight neighbours. Thinning it to a sparse scatter gives something
+    /// much closer to the classic random soup, which is where the interesting
+    /// structures come from.
+    ///
+    /// Deterministic in `seed` so the same minute always scatters the same way
+    /// and a re-render doesn't reshuffle the field.
+    func scattered(density: Double, seed: UInt64) -> CellBitmap {
+        guard density < 1 else { return self }
+        guard density > 0 else { return CellBitmap(width: width, height: height) }
+
+        var result = CellBitmap(width: width, height: height)
+        // xorshift64; seeded away from zero, which is a fixed point.
+        var state = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        if state == 0 { state = 0x2545_F491_4F6C_DD1D }
+        let threshold = UInt64(density * Double(UInt64.max))
+
+        for index in words.indices {
+            var word = words[index]
+            var kept: UInt64 = 0
+            while word != 0 {
+                let bit = word.trailingZeroBitCount
+                word &= word - 1
+                state ^= state << 13
+                state ^= state >> 7
+                state ^= state << 17
+                if state < threshold { kept |= UInt64(1) << UInt64(bit) }
+            }
+            result.words[index] = kept
+        }
+        return result
+    }
+
 }

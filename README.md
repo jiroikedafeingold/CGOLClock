@@ -3,10 +3,10 @@
 A digital clock for iPhone and iPad whose pixels are cells in Conway's Game of Life.
 
 Every minute the current time is drawn onto the grid. The digits hold for a second so you
-can read them, and then those lit pixels become the seed for Conway's Game of Life. The strokes come apart, throw off gliders, and settle into
-still lifes over the rest of the minute. A subtle teal ghost marks the cells the digits
-started from, so the time is still readable long after the amber cells have scattered. At
-the next minute the grid is reseeded with the new time.
+can read them, and then some of those lit pixels — the whole glyph, just its outline, or a
+random scatter of it — become the seed for Conway's Game of Life. The strokes come apart,
+throw off gliders, and settle into still lifes over the rest of the minute. The time itself stays on screen underneath at low
+opacity, so it is readable throughout. At the next minute the grid is reseeded.
 
 Landscape, full-bleed, iPhone and iPad.
 
@@ -60,44 +60,112 @@ and a dead one as an empty frame; at one texel per cell it blends instead.
 Live cells are found by walking set bits with `trailingZeroBitCount` rather than scanning
 all 64 columns per word.
 
-Measured per generation on an iPhone 17 Pro simulator, optimised build:
+### Making it fast
+
+Two things dominate: advancing the grid, and pushing pixels. They were measured
+separately rather than guessed at, and the answers were not the expected ones.
+
+**The Life step is already near optimal.** SWAR does 64 cells in ~30 integer operations,
+about half an operation per cell. Both axes of the step parallelise cleanly — each output
+row reads only the previous generation — so it runs in row bands across cores above
+100k cells.
+
+**The raster was the bottleneck, and the cost was not drawing.** `CGContext.makeImage()`
+allocates and copies the whole bitmap every call; at pixel resolution that is 12 MB a
+frame, dominated by first-touch page faults on the fresh allocation. It measured ~4 ms
+against ~1 ms for actually drawing the frame. Frames now come from a recycling pool and
+are handed to a `CGDataProvider` that returns the buffer when Core Graphics is done, so
+rendering allocates and copies nothing. That took the raster from **4.6 ms to 1.5 ms**.
+The raster parallelises by row band too, with the ghost cells sliced by row so bands never
+contend.
+
+Measured per generation, optimised build, iPhone 17 Pro simulator:
 
 | | Life step | Raster | Cells |
 |---|---|---|---|
 | LED Matrix | ~40 µs | ~0.3 ms | 3.4 k |
-| Pixel | ~0.3 ms | ~5 ms | 3.2 M |
+| Pixel | ~0.3 ms | ~1.5 ms | 3.2 M |
 
-At the peak rate of 10 generations a second even pixel resolution is around 6% of the
-main thread, which is why none of this needs to leave the main actor. A `#if DEBUG`
-logger reports the numbers rather than leaving it to assumption.
+Costs rise with a livelier seed — outline and scatter keep far more of the field active,
+so fewer rows can be skipped. On a 3.5 M-cell grid with an outline seed the step runs
+~0.7 ms and the raster ~2.4 ms, around 3% of the main thread at ten generations a second.
 
-Debug builds are compiled with `-O` rather than the usual `-Onone`. At `-Onone` these
-paths are 4–20x slower — pixel resolution measures ~3 ms step and ~20 ms raster, enough to
-feel sluggish — because the scattered per-cell writes lose their inlining, not because of
-any memory-bandwidth wall. The trade is that stepping through this code in the debugger is
-less pleasant; flip `SWIFT_OPTIMIZATION_LEVEL` back if you need that.
+Debug builds compile at `-O`. At `-Onone` these paths are 4–20x slower — the scattered
+per-cell writes lose their inlining — which is enough to feel sluggish while developing.
+
+#### What was tried and rejected
+
+**Golly's period-two skipping.** Golly's QuickLife keeps both phases of every tile and
+flags the ones that are stable or oscillating with period two so it can skip them
+wholesale. That matters because a settling field is mostly still lifes *and blinkers*, and
+a single blinker defeats a plain "did anything change" test. Implemented globally here it
+**never fired**: gliders wander the torus indefinitely, and one moving glider makes the
+whole board differ from two steps back. Measured 0 reused frames in 100 while adding
+~400 µs a generation for the comparison, so it came out again. Making it pay would mean
+going per-tile as Golly does — and the win would land on the step, already the cheaper
+half of the frame. Per-tile skipping cannot help the raster here, because handing each
+frame's buffer away means there is no persistent canvas to leave untouched.
+
+**HashLife.** Golly's headline algorithm memoises a quadtree and buys exponential
+speedups on patterns with regularity, over millions of generations. This runs ~550
+generations of deliberately chaotic soup on a torus, which is the case QuickLife exists
+for — the hashing overhead would not be repaid.
+
+**The Neural Engine.** Not usable. It has no general compute API; reaching it means a
+Core ML model over float tensors. Life would have to become a 3x3 convolution plus a
+threshold — nine multiply-accumulates per cell against SWAR's half an operation — with a
+CPU round trip every generation. It would be slower, and the step is not the bottleneck
+anyway. The genuine accelerator option is the GPU: upload the bitboard as a texture and
+expand it in a fragment shader, which would attack the raster. That is a real rewrite and
+has not been done.
 
 ### Settings
 
-Tap the screen to reveal a gear in the upper right; it fades after eight seconds. The
-sheet sets the cell colour, the time colour, the typeface, and the resolution. Changing a
-colour or a typeface redraws in place rather than restarting the simulation.
+Tap the screen to reveal a gear in the upper right; it fades after eight seconds.
+
+| Setting | Default |
+|---|---|
+| Living cell colour | amber `#FFB000` |
+| Time colour | white |
+| Time opacity | 30% |
+| Typeface | Round (of six) |
+| What comes alive | Outline |
+| Resolution | Pixel |
+
+**Typefaces.** Six: Round, Block, Neue, Serif, Narrow, Type. At pixel resolution each
+names a real font and is rasterised at screen resolution. At LED-matrix sizes a digit is
+only 8x14 cells, where a real font thresholds down to one-cell strokes that die in a
+single generation — measured on Helvetica at 16px, Black and Heavy give a thinnest stroke
+of one cell, Bold two — so matrix resolution uses hand-drawn bitmap glyphs. Only Round
+and Block have their own; the rest borrow the closer of the two, and the sheet says so.
+
+**What comes alive.** The time is *always* drawn filled. This setting only picks which of
+its cells are handed to Life:
+
+- **Filled** — the whole glyph. Solid interiors have eight neighbours and die at once, so
+  this erodes inward from the edges.
+- **Outline** — just the glyph outline, stroked at about 0.9% of the point size. Thin
+  strokes break into more varied debris than fat ones, and the strokes are free to come
+  apart rather than being pinned by a solid interior.
+- **Scatter** — a random fraction of the glyph, set by a slider (20% by default). This is
+  closest to a classic Life soup and is the liveliest of the three. Deterministic per
+  minute, so a redraw doesn't reshuffle the field.
+
+Outline needs a stroke many cells wide, so it falls back to Filled at matrix resolution.
+Scatter works at either.
 
 | Resolution | Grid (iPhone 17 Pro landscape) | Cell | Glyph scale |
 |---|---|---|---|
 | LED Matrix | 86 x 39 = 3,354 cells | 10.2 pt | 1 |
 | Pixel | 2622 x 1206 = 3,162,132 cells | 1 device pixel | 30 |
 
-Pixel resolution puts one cell on every device pixel, and scales the font up by the same
-factor so the clock stays exactly half the screen width. The digits therefore look the
-same size in both modes — they just erode a grain at a time instead of a block at a time,
-because a stroke that was 2 cells thick is now 60.
+Pixel resolution puts one cell on every device pixel and scales the font by the same
+factor so the clock stays exactly half the screen width. At one texel per cell there is no
+room to draw a ghost ring around a live square, so a cell that is both takes a **blended
+colour** — an even mix of the two, landing on a hue belonging to neither.
 
-At one texel per cell there is no room to draw a ghost ring around a live square, so a
-cell that is both takes a **blended colour** instead — an even mix of the two, which
-lands on a hue belonging to neither. During the three-second hold every seed cell is both
-live and ghost, so the whole clock shows in that mixed colour and then resolves towards
-the time colour as Life eats the interiors.
+The status bar and home indicator are hidden; nothing should compete with the clock, the
+system clock least of all.
 
 ### Layout
 
@@ -119,7 +187,7 @@ visibly to the right.
 
 Digit slots are a fixed width, so a narrow glyph like `1` doesn't get re-centred inside
 its slot. That keeps every other digit in the same place as the time changes, which
-matters when the teal ghost is a fixed record of the seed.
+matters when the time underneath is a fixed record of the seed.
 
 ### The typefaces
 
@@ -172,12 +240,13 @@ CGOLClock/
   Life/
     CellBitmap.swift      bit-per-cell grid, shared layout with LifeGrid
     LifeGrid.swift        SWAR bitboard, toroidal wrap, the step
-    ClockFace.swift       the two typefaces: bitmap glyphs and font names
+    ClockFace.swift       six typefaces: bitmap glyphs and font names
     DigitFont.swift       bitmap metrics, digit stamping, time formatting
     TypeRenderer.swift    Core Text rasterisation for pixel resolution
     GridLayout.swift      cell size, grid dimensions, safe-area centring
   Render/
-    Palette.swift         amber on black, teal ghost
+    Palette.swift         cell, time and blended colours
+    FrameBufferPool.swift recycled frame buffers, so rendering never allocates
     FrameRasterizer.swift pixel buffer -> CGImage
   Settings/
     ClockSettings.swift   persisted colours and resolution
@@ -190,46 +259,15 @@ Nothing below `ClockView` imports SwiftUI.
 
 ## Tests
 
-116 tests, Swift Testing. The ones worth knowing about:
+Removed for now. There was a suite of 116 covering the SWAR step against a naive
+reference, word-boundary and wrapping cases, the bitmap glyph data, centring, pacing and
+the rasteriser; it is in the history if it is wanted back. The empty `CGOLClockTests`
+target is still in the project.
 
-- **Cross-check against a naive implementation.** A dense pseudorandom soup is run for 30
-  generations at widths 37, 64, 65, 76, 128 and 130 and compared cell-for-cell against a
-  straightforward per-cell toroidal Life. This is the test that actually proves the SWAR
-  step, and the widths are chosen to exercise exact, partial and multi-word rows.
-- **Word-boundary cases.** A blinker straddling bit 63/64; a glider crossing the boundary;
-  a blinker at the last column of a partial word; and a check that no bits ever survive
-  past the declared width.
-- **Wrapping.** Blinkers spanning each edge, and a glider that leaves the bottom-right
-  corner and reappears at the top-left.
-- **Centring and pacing**, including that the rate is monotonic within each phase and
-  never stalls or runs away.
-- **Rasterising**, by reading texels back out of the rendered `CGImage`: that a ghost cell
-  is a hollow ring with a dark centre, and that the ring stays teal while the interior
-  turns amber when a live cell shares the cell.
-- **Resolution and settings**: that the clock stays half the screen width in both modes
-  despite a 30x difference in grid fineness, that a scaled glyph is exactly the base glyph
-  blown up, that a live-and-ghost cell takes the combined colour, and that choices survive
-  a relaunch.
-- **The bitmap faces**, since they're hand-drawn data that's easy to get subtly wrong —
-  every check runs against both. Every glyph is the declared size and doesn't spill past
-  it, all ten are pairwise distinct by at least six cells, no cell is isolated enough to
-  evaporate in one generation, and the set isn't mirror- or flip-symmetric. The
-  neighbour-count check caught a one-cell spur on Block's `1` before it shipped.
-- **The Core Text path**, by asserting what distinguishes it from a scaled bitmap: stroke
-  widths take many distinct values rather than multiples of a scale factor, and a round
-  glyph's left edge wanders instead of stepping.
-
-### Running them
-
-The test bundle is hosted by the app, and the `CGOLClockTests` scheme does not rebuild the
-app target. **Always build the `CGOLClock` scheme first**, for the same destination — the
-tests run inside the app binary, so a stale one silently exercises old code rather than
-failing to link.
-
-```
-xcodebuild -scheme CGOLClock     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
-xcodebuild -scheme CGOLClockTests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
-```
+Worth knowing if they come back: the test bundle was app-hosted, which forced
+`ENABLE_DEBUG_DYLIB = NO` and meant the app scheme had to be built first for the same
+destination or the tests would silently exercise a stale binary. With the tests gone the
+debug dylib is back on, so SwiftUI previews and `RunCodeSnippet` work again.
 
 ## Requirements
 

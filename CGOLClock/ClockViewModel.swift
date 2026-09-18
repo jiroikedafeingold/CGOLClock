@@ -55,6 +55,8 @@ final class ClockViewModel {
         var palette: Palette
         var resolution: Resolution
         var face: ClockFace
+        var seedStyle: SeedStyle
+        var scatterDensity: Double
     }
 
     /// The pieces that have to be rebuilt together.
@@ -92,7 +94,9 @@ final class ClockViewModel {
 
         if let display, display.layout == layout, clockCentre == centre,
            display.rasterizer.style == style {
-            if previous?.face != configuration.face {
+            if previous?.face != configuration.face
+                || previous?.seedStyle != configuration.seedStyle
+                || previous?.scatterDensity != configuration.scatterDensity {
                 // Same grid, different letterforms: redraw the seed in place
                 // rather than tearing the simulation down.
                 reseed(display, at: Date())
@@ -178,14 +182,27 @@ final class ClockViewModel {
         guard let display else { return }
 
         let clock = ContinuousClock()
+        var needsRedraw = true
+
         let stepped = clock.measure {
             if minuteIndex(of: now) != seededMinute {
                 reseed(display, at: now)
             } else if secondsIntoMinute(now) >= holdDuration {
                 display.grid.step()
+                // A settled field produces an identical frame, so there is
+                // nothing to draw. Late in the minute this is most of them.
+                needsRedraw = display.grid.changedLastStep
+            } else {
+                // Inside the hold: the seed is already on screen.
+                needsRedraw = false
             }
-            // Otherwise we're inside the hold: leave the seed untouched.
         }
+
+        guard needsRedraw else {
+            record(step: stepped, raster: .zero, generation: display.grid.generation)
+            return
+        }
+
         let rasterised = clock.measure {
             frame = display.rasterizer.image(for: display.grid)
         }
@@ -193,13 +210,38 @@ final class ClockViewModel {
     }
 
     private func reseed(_ display: Display, at date: Date) {
-        let seed = seedBitmap(for: ClockText.string(for: date), display: display)
-        display.grid.load(seed)
-        // The ghost marks the seed cells themselves, so the digits stay
-        // readable in place as Life eats them.
-        display.rasterizer.setGhost(seed)
-        currentSeed = seed
+        let text = ClockText.string(for: date)
+
+        // The ghost is always the filled digits; the seed style only decides
+        // which of those cells come alive.
+        let filled = seedBitmap(for: text, display: display, outlined: false)
+        let living: CellBitmap
+        switch effectiveSeedStyle {
+        case .filled:
+            living = filled
+        case .outline:
+            living = seedBitmap(for: text, display: display, outlined: true)
+        case .scattered:
+            living = filled.scattered(
+                density: configuration?.scatterDensity ?? 0.2,
+                seed: UInt64(bitPattern: Int64(minuteIndex(of: date)))
+            )
+        }
+
+        display.grid.load(living)
+        display.rasterizer.setGhost(filled)
+        currentSeed = filled
         seededMinute = minuteIndex(of: date)
+    }
+
+    /// Outlining needs a stroke many cells wide, which rules out the 8x14
+    /// bitmap glyphs; it falls back to filled there.
+    private var effectiveSeedStyle: SeedStyle {
+        guard let configuration else { return .filled }
+        if configuration.seedStyle == .outline && configuration.resolution != .pixel {
+            return .filled
+        }
+        return configuration.seedStyle
     }
 
     /// Picks the way the digits are drawn from how big a cell is.
@@ -209,13 +251,13 @@ final class ClockViewModel {
     /// resolution. At LED-matrix sizes a real font thresholds down to one-cell
     /// strokes that die immediately, so the hand-drawn bitmap is used instead
     /// and scaled to the grid.
-    private func seedBitmap(for text: String, display: Display) -> CellBitmap {
+    private func seedBitmap(for text: String, display: Display, outlined: Bool) -> CellBitmap {
         let layout = display.layout
         let face = configuration?.face ?? .round
 
         switch configuration?.resolution ?? .matrix {
         case .pixel:
-            return TypeRenderer(face: face).seed(
+            return TypeRenderer(face: face, outlined: outlined).seed(
                 text: text,
                 columns: layout.columns,
                 rows: layout.rows,
@@ -267,6 +309,7 @@ final class ClockViewModel {
     private var stepTotal: Duration = .zero
     private var rasterTotal: Duration = .zero
     private var measuredGenerations = 0
+    private var skippedRasters = 0
     #endif
 
     /// Measures rather than assumes that a generation is cheap enough to run on
@@ -276,6 +319,7 @@ final class ClockViewModel {
         stepTotal += step
         rasterTotal += raster
         measuredGenerations += 1
+        if raster == .zero { skippedRasters += 1 }
         guard measuredGenerations == 100 else { return }
 
         func microseconds(_ total: Duration) -> Double {
@@ -283,11 +327,12 @@ final class ClockViewModel {
             return Double(components.seconds) * 1e6 + Double(components.attoseconds) / 1e12
         }
         Self.log.debug(
-            "generation \(generation): step \(microseconds(self.stepTotal), format: .fixed(precision: 1))µs, raster \(microseconds(self.rasterTotal), format: .fixed(precision: 1))µs"
+            "generation \(generation): step \(microseconds(self.stepTotal), format: .fixed(precision: 1))µs, raster \(microseconds(self.rasterTotal), format: .fixed(precision: 1))µs, \(self.skippedRasters) of 100 frames unchanged"
         )
         stepTotal = .zero
         rasterTotal = .zero
         measuredGenerations = 0
+        skippedRasters = 0
         #endif
     }
 }

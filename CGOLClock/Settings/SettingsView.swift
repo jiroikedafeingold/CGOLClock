@@ -10,6 +10,7 @@ struct SettingsView: View {
                 Section("Colours") {
                     ColorPicker("Living cells", selection: $settings.live.color, supportsOpacity: false)
                     ColorPicker("Time", selection: $settings.ghost.color, supportsOpacity: false)
+                    opacitySlider
                     swatch
                 }
 
@@ -19,15 +20,28 @@ struct SettingsView: View {
                             Text(face.name).tag(face)
                         }
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                 } header: {
                     Text("Typeface")
                 } footer: {
-                    Text(
-                        settings.resolution == .pixel
-                            ? "Drawn with a real font at full screen resolution."
-                            : "Drawn from hand-made pixel glyphs sized to the grid."
-                    )
+                    Text(typefaceFooter)
+                }
+
+                Section {
+                    Picker("Cells from", selection: $settings.seedStyle) {
+                        ForEach(SeedStyle.allCases) { style in
+                            Text(style.name).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if settings.seedStyle == .scattered {
+                        scatterSlider
+                    }
+                } header: {
+                    Text("What comes alive")
+                } footer: {
+                    Text(seedFooter)
                 }
 
                 Section {
@@ -60,8 +74,63 @@ struct SettingsView: View {
         }
     }
 
-    /// Shows the three colours the display actually uses, including the mixed
-    /// one — which is otherwise hard to predict from the two you picked.
+    private var typefaceFooter: String {
+        settings.outlineIsAvailable
+            ? "Drawn with a real font at full screen resolution."
+            : """
+                Matrix resolution draws from built-in pixel glyphs — Round and Block differ \
+                there, the rest borrow the closest.
+                """
+    }
+
+    /// The time is always drawn filled; this only picks the Life seed.
+    private var seedFooter: String {
+        switch settings.effectiveSeedStyle {
+        case .filled:
+            let unavailable = settings.seedStyle == .outline
+                ? " Outline needs Pixel resolution, where a stroke is many cells wide."
+                : ""
+            return "The whole of each digit comes alive, eroding inward from the edges."
+                + unavailable
+        case .outline:
+            return "Only the outline comes alive. The time itself stays filled."
+        case .scattered:
+            return """
+                A random \(settings.scatterDensity.formatted(.percent.precision(.fractionLength(0)))) \
+                of each digit comes alive — closest to a classic Life soup. The time itself \
+                stays filled.
+                """
+        }
+    }
+
+    private var scatterSlider: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            LabeledContent("Density") {
+                Text(settings.scatterDensity.formatted(.percent.precision(.fractionLength(0))))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $settings.scatterDensity, in: 0.05...1) {
+                Text("Scatter density")
+            }
+        }
+    }
+
+    private var opacitySlider: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            LabeledContent("Time opacity") {
+                Text(settings.timeOpacity.formatted(.percent.precision(.fractionLength(0))))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $settings.timeOpacity, in: 0.05...1) {
+                Text("Time opacity")
+            }
+        }
+    }
+
+    /// Shows the colours the display actually uses, including the mixed one —
+    /// which is otherwise hard to predict from the two you picked.
     private var swatch: some View {
         let palette = settings.palette
         return LabeledContent("Preview") {

@@ -14,6 +14,8 @@ import Foundation
 /// bitmap faces still exist.
 nonisolated struct TypeRenderer {
     var face: ClockFace
+    /// Draw only the glyph outlines rather than filled letterforms.
+    var outlined = false
 
     /// Draws `text` centred on `centre`, scaled so its ink is `targetWidth`
     /// cells across.
@@ -53,8 +55,11 @@ nonisolated struct TypeRenderer {
 
             context.setAllowsAntialiasing(true)
             context.setFillColor(gray: 1, alpha: 1)
+            context.setStrokeColor(gray: 1, alpha: 1)
             context.textPosition = CGPoint(x: originX, y: originY)
-            CTLineDraw(line(text, font: font), context)
+            // Position and scale always come from the filled measurement, so
+            // an outlined seed still lines up with the filled ghost.
+            CTLineDraw(line(text, font: font, outlined: outlined, size: size), context)
         }
 
         // Only the rows and columns the text could have touched need scanning,
@@ -76,16 +81,25 @@ nonisolated struct TypeRenderer {
         return bitmap
     }
 
-    private func line(_ text: String, font: CTFont) -> CTLine {
-        let attributed = NSAttributedString(
-            string: text,
-            attributes: [
-                NSAttributedString.Key(kCTFontAttributeName as String): font,
-                NSAttributedString.Key(kCTForegroundColorAttributeName as String):
-                    CGColor(gray: 1, alpha: 1),
-            ]
-        )
-        return CTLineCreateWithAttributedString(attributed)
+    private func line(_ text: String, font: CTFont, outlined: Bool = false, size: CGFloat = 0) -> CTLine {
+        var attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String):
+                CGColor(gray: 1, alpha: 1),
+        ]
+        if outlined {
+            // Core Text takes stroke width as a percentage of the point size,
+            // and a positive value means stroke without filling. Keep the line
+            // at least three cells thick: anything thinner is mostly one-cell
+            // strokes once thresholded, and those die in a single generation.
+            // Thin strokes break up into more varied debris than fat ones.
+            let thickness = max(3, size * 0.009)
+            attributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] =
+                NSNumber(value: Double(thickness / max(size, 1) * 100))
+            attributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] =
+                CGColor(gray: 1, alpha: 1)
+        }
+        return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
     }
 
     /// The bounds of the drawn glyph outlines, relative to the text origin —

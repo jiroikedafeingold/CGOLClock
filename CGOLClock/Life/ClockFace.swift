@@ -3,16 +3,22 @@ import CoreText
 
 /// A typeface for the clock, realised differently depending on how big a cell is.
 ///
-/// At LED-matrix sizes a digit is 8x14 cells, and a real font thresholded that
+/// At pixel resolution a digit is hundreds of pixels tall, so the face names a
+/// real font and `TypeRenderer` rasterises it at the screen's own resolution.
+///
+/// At LED-matrix sizes a digit is only 8x14 cells. A real font thresholded that
 /// small comes out with one-cell strokes that evaporate in a single generation
-/// — so each face carries hand-drawn bitmap glyphs. At pixel resolution a digit
-/// is hundreds of pixels tall, so the face names a real font instead and the
-/// glyphs are rasterised at the screen's own resolution.
+/// — measured on Helvetica at 16px: Black and Heavy give a thinnest stroke of
+/// one cell, Bold two — so matrix resolution uses hand-drawn bitmap glyphs.
+/// Only `round` and `block` have their own; the rest borrow whichever is
+/// closest, which the settings sheet says out loud.
 nonisolated enum ClockFace: String, CaseIterable, Identifiable, Sendable {
-    /// Chamfered bowls and long diagonals.
     case round
-    /// Square corners and flat bars, like a station sign.
     case block
+    case grotesque
+    case serif
+    case condensed
+    case typewriter
 
     var id: String { rawValue }
 
@@ -20,28 +26,52 @@ nonisolated enum ClockFace: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .round: "Round"
         case .block: "Block"
+        case .grotesque: "Neue"
+        case .serif: "Serif"
+        case .condensed: "Narrow"
+        case .typewriter: "Type"
         }
     }
 
-    /// Row bitmasks per digit, bit 0 being the leftmost column.
-    var glyphs: [[UInt8]] {
-        switch self {
-        case .round: Self.roundGlyphs
-        case .block: Self.blockGlyphs
-        }
-    }
-
-    /// Concrete families rather than the system font, so the two faces stay
+    /// Concrete families rather than the system font, so the faces stay
     /// visibly different and don't drift with the OS.
     private var fontName: String {
         switch self {
         case .round: "AvenirNext-Heavy"
         case .block: "Menlo-Bold"
+        case .grotesque: "HelveticaNeue-Bold"
+        case .serif: "Georgia-Bold"
+        case .condensed: "AvenirNextCondensed-Heavy"
+        case .typewriter: "Courier-Bold"
         }
     }
 
     func font(ofSize size: CGFloat) -> CTFont {
         CTFontCreateWithName(fontName as CFString, size, nil)
+    }
+
+    /// Whether this face has bitmap glyphs of its own, or borrows them.
+    var hasOwnBitmap: Bool {
+        switch self {
+        case .round, .block: true
+        default: false
+        }
+    }
+
+    /// The face whose bitmap glyphs stand in at LED-matrix sizes.
+    var bitmapSource: ClockFace {
+        switch self {
+        case .round, .grotesque, .serif: .round
+        case .block, .condensed, .typewriter: .block
+        }
+    }
+
+    /// Row bitmasks per digit, bit 0 being the leftmost column.
+    var glyphs: [[UInt8]] {
+        switch bitmapSource {
+        case .block: Self.blockGlyphs
+        default: Self.roundGlyphs
+        }
     }
 
     // MARK: - Bitmaps
