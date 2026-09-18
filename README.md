@@ -2,9 +2,8 @@
 
 A digital clock for iPhone and iPad whose pixels are cells in Conway's Game of Life.
 
-Every minute the current time is drawn as chunky pixel digits on an LED-matrix grid. The
-digits hold for three seconds so you can read them, and then those lit pixels become the
-seed for Conway's Game of Life. The strokes come apart, throw off gliders, and settle into
+Every minute the current time is drawn onto the grid. The digits hold for a second so you
+can read them, and then those lit pixels become the seed for Conway's Game of Life. The strokes come apart, throw off gliders, and settle into
 still lifes over the rest of the minute. A subtle teal ghost marks the cells the digits
 started from, so the time is still readable long after the amber cells have scattered. At
 the next minute the grid is reseeded with the new time.
@@ -72,15 +71,17 @@ At the peak rate of 10 generations a second even pixel resolution is around 6% o
 main thread, which is why none of this needs to leave the main actor. A `#if DEBUG`
 logger reports the numbers rather than leaving it to assumption.
 
-Note that an unoptimised (`-Onone`) build is roughly 4–20x slower on these paths — pixel
-resolution measures ~3 ms step and ~20 ms raster there. That is the scattered per-cell
-writes losing their inlining, not a memory-bandwidth wall; judge the mode in a Release
-build.
+Debug builds are compiled with `-O` rather than the usual `-Onone`. At `-Onone` these
+paths are 4–20x slower — pixel resolution measures ~3 ms step and ~20 ms raster, enough to
+feel sluggish — because the scattered per-cell writes lose their inlining, not because of
+any memory-bandwidth wall. The trade is that stepping through this code in the debugger is
+less pleasant; flip `SWIFT_OPTIMIZATION_LEVEL` back if you need that.
 
 ### Settings
 
 Tap the screen to reveal a gear in the upper right; it fades after eight seconds. The
-sheet sets the cell colour, the time colour, and the resolution.
+sheet sets the cell colour, the time colour, the typeface, and the resolution. Changing a
+colour or a typeface redraws in place rather than restarting the simulation.
 
 | Resolution | Grid (iPhone 17 Pro landscape) | Cell | Glyph scale |
 |---|---|---|---|
@@ -120,36 +121,46 @@ Digit slots are a fixed width, so a narrow glyph like `1` doesn't get re-centred
 its slot. That keeps every other digit in the same place as the time changes, which
 matters when the teal ghost is a fixed record of the seed.
 
-### The font
+### The typefaces
 
-The digits are a hand-drawn 8x14 pixel font, not a seven-segment renderer. Seven-segment
-glyphs are built from the same seven axis-aligned bars, so every one is near-symmetric and
-they all decay under Life in much the same way. These shapes deliberately mix closed bowls
-(0, 6, 8), long diagonals (1, 2, 4, 7) and open tails (3, 5, 9), so each digit evolves
-differently — a diagonal is a two-cell staircase and breaks up quite unlike a straight bar.
+Two faces, **Round** and **Block**, each realised two ways depending on how big a cell is.
 
-The glyphs live as ASCII art in `DigitFont.swift`, which is what you edit to change them.
+**At LED-matrix sizes** a digit is 8x14 cells and the face uses hand-drawn bitmap glyphs,
+kept as ASCII art in `ClockFace.swift`. This isn't nostalgia — a real font thresholded at
+14 cells tall comes out with one-cell strokes, and a one-cell stroke has too few
+neighbours to survive its first generation. Measured: Helvetica Bold at 16px gives a
+thinnest stroke of 2 cells, Black and Heavy give 1. The hand-drawn glyphs are two cells
+thick everywhere, and a test enforces that no cell has fewer than two neighbours.
+
+The shapes also deliberately avoid the trap the original seven-segment renderer fell into:
+those glyphs were all built from the same seven axis-aligned bars, so every digit was
+near-symmetric and they all decayed alike. Round mixes closed bowls (0, 6, 8), long
+diagonals (1, 2, 4, 7) and open tails (3, 5, 9); Block is all right angles. Tests assert
+the set isn't mirror- or flip-symmetric and that every pair of digits differs by at least
+six cells.
+
+**At pixel resolution** there is no reason to blow an 8x14 bitmap up thirty times, so the
+face names a real font — Avenir Next Heavy for Round, Menlo Bold for Block — and
+`TypeRenderer` rasterises the time with Core Text at the grid's own resolution and
+thresholds it. The digits get genuine curves, and Life erodes a smooth shape rather than a
+staircase. The renderer measures the string at a reference size and scales to the
+requested cell width, so the clock stays half the screen wide whichever face is picked.
 
 ### Pacing
 
 ```
-0s ─────── 3s ──────────── 9s ─────────────────────────────── 60s
-   hold        ramp up          hold at speed
-   (digits)    5 → 10 gen/s     10 gen/s
+0s ─ 1s ──────────── 7s ─────────────────────────────────── 60s
+ hold    ramp up           hold at speed
+         5 → 10 gen/s      10 gen/s
 ```
 
-Roughly 550 generations a minute. The rate eases in so the first few generations — where
+Roughly 560 generations a minute. The rate eases in so the first few generations — where
 the strokes come apart — are watchable, then holds; the field usually settles into still
 lifes and blinkers well before the minute is out, and holding the pace looks better than
 watching a frozen grid tick over slowly. The run loop sleeps for exactly one
 inter-generation interval rather than running on a display link — nothing on screen
 changes between generations, so there is no reason to wake up for frames that would be
 identical.
-
-Strokes are two cells thick throughout, deliberately. A one-cell stroke has too few
-neighbours to survive and evaporates in a single generation; at two cells the strokes die
-back unevenly, shed gliders, and leave still-life blocks behind. A test enforces that no
-glyph cell has fewer than two neighbours.
 
 The display is kept awake while the clock is on screen (`isIdleTimerDisabled`), released
 whenever the scene stops being active.
@@ -161,7 +172,9 @@ CGOLClock/
   Life/
     CellBitmap.swift      bit-per-cell grid, shared layout with LifeGrid
     LifeGrid.swift        SWAR bitboard, toroidal wrap, the step
-    DigitFont.swift       8x14 pixel font, digit stamping, time formatting
+    ClockFace.swift       the two typefaces: bitmap glyphs and font names
+    DigitFont.swift       bitmap metrics, digit stamping, time formatting
+    TypeRenderer.swift    Core Text rasterisation for pixel resolution
     GridLayout.swift      cell size, grid dimensions, safe-area centring
   Render/
     Palette.swift         amber on black, teal ghost
@@ -177,7 +190,7 @@ Nothing below `ClockView` imports SwiftUI.
 
 ## Tests
 
-87 tests, Swift Testing. The ones worth knowing about:
+116 tests, Swift Testing. The ones worth knowing about:
 
 - **Cross-check against a naive implementation.** A dense pseudorandom soup is run for 30
   generations at widths 37, 64, 65, 76, 128 and 130 and compared cell-for-cell against a
@@ -197,11 +210,14 @@ Nothing below `ClockView` imports SwiftUI.
   despite a 30x difference in grid fineness, that a scaled glyph is exactly the base glyph
   blown up, that a live-and-ghost cell takes the combined colour, and that choices survive
   a relaunch.
-- **The font**, since it's hand-drawn data that's easy to get subtly wrong: every glyph is
-  the declared size and doesn't spill past it, all ten are pairwise distinct by at least
-  six cells, no cell is isolated enough to evaporate in one generation, and the set isn't
-  mirror- or flip-symmetric — which is the whole reason it replaced the seven-segment
-  renderer.
+- **The bitmap faces**, since they're hand-drawn data that's easy to get subtly wrong —
+  every check runs against both. Every glyph is the declared size and doesn't spill past
+  it, all ten are pairwise distinct by at least six cells, no cell is isolated enough to
+  evaporate in one generation, and the set isn't mirror- or flip-symmetric. The
+  neighbour-count check caught a one-cell spur on Block's `1` before it shipped.
+- **The Core Text path**, by asserting what distinguishes it from a scaled bitmap: stroke
+  widths take many distinct values rather than multiples of a scale factor, and a round
+  glyph's left edge wanders instead of stepping.
 
 ### Running them
 

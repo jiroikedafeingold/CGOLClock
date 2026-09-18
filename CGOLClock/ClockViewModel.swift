@@ -6,12 +6,11 @@ import os
 /// Drives the clock: seeds the grid from the current time, advances Life until
 /// the minute rolls over, and publishes each generation as a `CGImage`.
 ///
-/// The generation rate eases from `fastRate` at the top of the minute down to
-/// `slowRate` at the end, so the field is churning while the digits are still
-/// recognisable and has slowed to a crawl by the time it has settled. The loop
-/// sleeps for exactly one inter-generation interval rather than running on a
-/// display link — nothing on screen changes between generations, so there is
-/// no reason to wake up for frames that would be identical.
+/// The digits are held briefly, then the generation rate eases up to its peak
+/// and stays there. The loop sleeps for exactly one inter-generation interval
+/// rather than running on a display link — nothing on screen changes between
+/// generations, so there is no reason to wake up for frames that would be
+/// identical.
 @Observable
 @MainActor
 final class ClockViewModel {
@@ -21,11 +20,11 @@ final class ClockViewModel {
 
     /// How long the untouched digits are held after the minute changes, before
     /// the first generation runs, so the time is legible before it decays.
-    private let holdDuration = 3.0
+    let holdDuration = 1.0
 
     /// How long the rate takes to climb from `startRate` to `peakRate` once
     /// the hold ends.
-    private let rampDuration = 6.0
+    let rampDuration = 6.0
 
     /// Generations per second through the minute. The rate eases up from
     /// `startRate` to `peakRate` across `rampDuration` and then stays there —
@@ -55,6 +54,7 @@ final class ClockViewModel {
         var displayScale: CGFloat
         var palette: Palette
         var resolution: Resolution
+        var face: ClockFace
     }
 
     /// The pieces that have to be rebuilt together.
@@ -92,8 +92,16 @@ final class ClockViewModel {
 
         if let display, display.layout == layout, clockCentre == centre,
            display.rasterizer.style == style {
-            guard display.rasterizer.palette != configuration.palette else { return }
-            recolour(display, palette: configuration.palette, style: style)
+            if previous?.face != configuration.face {
+                // Same grid, different letterforms: redraw the seed in place
+                // rather than tearing the simulation down.
+                reseed(display, at: Date())
+            }
+            if display.rasterizer.palette != configuration.palette {
+                recolour(display, palette: configuration.palette, style: style)
+            } else {
+                frame = display.rasterizer.image(for: display.grid)
+            }
             return
         }
 
@@ -185,21 +193,43 @@ final class ClockViewModel {
     }
 
     private func reseed(_ display: Display, at date: Date) {
-        // Glyphs are scaled to the grid, so the digits are the same size on
-        // screen whether a cell is a chunky LED or a single device pixel.
-        let renderer = DigitRenderer(metrics: display.layout.metrics)
-        let seed = renderer.seed(
-            text: ClockText.string(for: date),
-            columns: display.layout.columns,
-            rows: display.layout.rows,
-            centre: clockCentre
-        )
+        let seed = seedBitmap(for: ClockText.string(for: date), display: display)
         display.grid.load(seed)
         // The ghost marks the seed cells themselves, so the digits stay
         // readable in place as Life eats them.
         display.rasterizer.setGhost(seed)
         currentSeed = seed
         seededMinute = minuteIndex(of: date)
+    }
+
+    /// Picks the way the digits are drawn from how big a cell is.
+    ///
+    /// At pixel resolution the grid is fine enough to carry real letterforms,
+    /// so the text is rasterised with an actual font at the screen's own
+    /// resolution. At LED-matrix sizes a real font thresholds down to one-cell
+    /// strokes that die immediately, so the hand-drawn bitmap is used instead
+    /// and scaled to the grid.
+    private func seedBitmap(for text: String, display: Display) -> CellBitmap {
+        let layout = display.layout
+        let face = configuration?.face ?? .round
+
+        switch configuration?.resolution ?? .matrix {
+        case .pixel:
+            return TypeRenderer(face: face).seed(
+                text: text,
+                columns: layout.columns,
+                rows: layout.rows,
+                centre: clockCentre,
+                targetWidth: layout.clockWidth
+            )
+        case .matrix:
+            return DigitRenderer(metrics: layout.metrics, face: face).seed(
+                text: text,
+                columns: layout.columns,
+                rows: layout.rows,
+                centre: clockCentre
+            )
+        }
     }
 
     /// Seconds to wait before the next generation. During the hold this is the

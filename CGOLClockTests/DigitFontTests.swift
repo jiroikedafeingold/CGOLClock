@@ -16,20 +16,21 @@ func litBounds(_ bitmap: CellBitmap) -> (minX: Int, maxX: Int, minY: Int, maxY: 
 }
 
 /// A digit rendered on its own, as a grid of booleans in glyph coordinates.
-func glyphCells(_ digit: Int) -> [[Bool]] {
-    DigitFont.glyphs[digit].map { mask in
+func glyphCells(_ digit: Int, face: ClockFace = .round) -> [[Bool]] {
+    face.glyphs[digit].map { mask in
         (0..<DigitFont.width).map { mask & (UInt8(1) << UInt8($0)) != 0 }
     }
 }
 
 @Suite("Digit font")
 struct DigitFontTests {
+    /// Every check runs against every face.
 
-    @Test("Every glyph is the declared size")
-    func glyphsAreWellFormed() {
-        #expect(DigitFont.glyphs.count == 10)
+    @Test("Every glyph is the declared size", arguments: ClockFace.allCases)
+    func glyphsAreWellFormed(face: ClockFace) {
+        #expect(face.glyphs.count == 10)
         for digit in 0...9 {
-            let rows = DigitFont.glyphs[digit]
+            let rows = face.glyphs[digit]
             #expect(rows.count == DigitFont.height, "digit \(digit) has \(rows.count) rows")
             for (index, mask) in rows.enumerated() {
                 // Nothing may spill past the declared width.
@@ -39,19 +40,19 @@ struct DigitFontTests {
         }
     }
 
-    @Test("Every digit draws something, and none is blank or solid")
-    func glyphsHaveContent() {
+    @Test("Every digit draws something, and none is blank or solid", arguments: ClockFace.allCases)
+    func glyphsHaveContent(face: ClockFace) {
         for digit in 0...9 {
-            let lit = DigitFont.glyphs[digit].reduce(0) { $0 + $1.nonzeroBitCount }
+            let lit = face.glyphs[digit].reduce(0) { $0 + $1.nonzeroBitCount }
             #expect(lit > 0, "digit \(digit) is blank")
             #expect(lit < DigitFont.width * DigitFont.height, "digit \(digit) is solid")
         }
     }
 
-    @Test("Every digit spans the full glyph height")
-    func glyphsAreFullHeight() {
+    @Test("Every digit spans the full glyph height", arguments: ClockFace.allCases)
+    func glyphsAreFullHeight(face: ClockFace) {
         for digit in 0...9 {
-            let rows = DigitFont.glyphs[digit]
+            let rows = face.glyphs[digit]
             #expect(rows.first != 0, "digit \(digit) has a blank top row")
             #expect(rows.last != 0, "digit \(digit) has a blank bottom row")
         }
@@ -60,11 +61,11 @@ struct DigitFontTests {
     /// Every digit must be distinguishable from every other, or the clock is
     /// unreadable. Cheap proxy: no two glyphs are identical, and no pair
     /// differs by only a cell or two.
-    @Test("All ten digits are clearly distinct")
-    func digitsAreDistinct() {
+    @Test("All ten digits are clearly distinct", arguments: ClockFace.allCases)
+    func digitsAreDistinct(face: ClockFace) {
         for a in 0..<9 {
             for b in (a + 1)..<10 {
-                let differing = zip(DigitFont.glyphs[a], DigitFont.glyphs[b])
+                let differing = zip(face.glyphs[a], face.glyphs[b])
                     .reduce(0) { $0 + ($1.0 ^ $1.1).nonzeroBitCount }
                 #expect(differing >= 6, "digits \(a) and \(b) differ by only \(differing) cells")
             }
@@ -74,10 +75,10 @@ struct DigitFontTests {
     /// The point of replacing the seven-segment renderer. Seven-segment glyphs
     /// are all axis-aligned bars, so every one is near-symmetric and they decay
     /// alike. These shapes should not be.
-    @Test("The font is not left-right symmetric")
-    func fontHasHorizontalVariation() {
+    @Test("The font is not left-right symmetric", arguments: ClockFace.allCases)
+    func fontHasHorizontalVariation(face: ClockFace) {
         func isMirrored(_ digit: Int) -> Bool {
-            DigitFont.glyphs[digit].allSatisfy { mask in
+            face.glyphs[digit].allSatisfy { mask in
                 var reversed: UInt8 = 0
                 for column in 0..<DigitFont.width where mask & (UInt8(1) << UInt8(column)) != 0 {
                     reversed |= UInt8(1) << UInt8(DigitFont.width - 1 - column)
@@ -90,18 +91,18 @@ struct DigitFontTests {
         #expect(mirrored.count <= 2, "too many mirror-symmetric digits: \(mirrored)")
     }
 
-    @Test("The font is not top-bottom symmetric")
-    func fontHasVerticalVariation() {
-        let flipped = (0...9).filter { DigitFont.glyphs[$0] == DigitFont.glyphs[$0].reversed() }
+    @Test("The font is not top-bottom symmetric", arguments: ClockFace.allCases)
+    func fontHasVerticalVariation(face: ClockFace) {
+        let flipped = (0...9).filter { face.glyphs[$0] == face.glyphs[$0].reversed() }
         #expect(flipped.count <= 2, "too many flip-symmetric digits: \(flipped)")
     }
 
     /// One-cell strokes evaporate in a single generation, so every lit cell
     /// should have a lit neighbour to lean on.
-    @Test("No digit has an isolated single cell")
-    func strokesAreThickEnough() {
+    @Test("No digit has an isolated single cell", arguments: ClockFace.allCases)
+    func strokesAreThickEnough(face: ClockFace) {
         for digit in 0...9 {
-            let cells = glyphCells(digit)
+            let cells = glyphCells(digit, face: face)
             for y in 0..<DigitFont.height {
                 for x in 0..<DigitFont.width where cells[y][x] {
                     var neighbours = 0
@@ -121,9 +122,12 @@ struct DigitFontTests {
 
 @Suite("Digit rendering")
 struct DigitRenderingTests {
-    let renderer = DigitRenderer()
     let metrics = GlyphMetrics.standard
     let centre = CellPoint(x: 43, y: 20)
+
+    private func renderer(_ face: ClockFace = .round) -> DigitRenderer {
+        DigitRenderer(metrics: .standard, face: face)
+    }
 
     /// A full `HH:MM` block must be exactly half of the grid.
     @Test("Block width is half the grid")
@@ -133,12 +137,12 @@ struct DigitRenderingTests {
         #expect(Double(metrics.blockWidth) / Double(layout.columns) == 0.5)
     }
 
-    @Test("A rendered digit matches its glyph")
-    func renderedDigitMatchesGlyph() {
+    @Test("A rendered digit matches its glyph", arguments: ClockFace.allCases)
+    func renderedDigitMatchesGlyph(face: ClockFace) {
         for digit in 0...9 {
-            let bitmap = renderer.seed(text: "\(digit)", columns: 86, rows: 40, centre: centre)
+            let bitmap = renderer(face).seed(text: "\(digit)", columns: 86, rows: 40, centre: centre)
             let bounds = try! #require(litBounds(bitmap), "digit \(digit) drew nothing")
-            let cells = glyphCells(digit)
+            let cells = glyphCells(digit, face: face)
 
             // The glyph's own bounding box, so we can line the two up.
             var glyphMinX = DigitFont.width, glyphMinY = DigitFont.height
@@ -158,7 +162,7 @@ struct DigitRenderingTests {
 
     @Test("A full HH:MM occupies exactly the block width")
     func fullTimeFillsTheBlock() {
-        let bitmap = renderer.seed(text: "08:30", columns: 86, rows: 40, centre: centre)
+        let bitmap = renderer().seed(text: "08:30", columns: 86, rows: 40, centre: centre)
         let bounds = try! #require(litBounds(bitmap))
         #expect(bounds.maxX - bounds.minX + 1 == metrics.blockWidth)
         #expect(bounds.maxY - bounds.minY + 1 == metrics.digitHeight)
@@ -166,7 +170,7 @@ struct DigitRenderingTests {
 
     @Test("The colon draws two separated dots")
     func colonIsTwoDots() {
-        let bitmap = renderer.seed(text: ":", columns: 86, rows: 40, centre: centre)
+        let bitmap = renderer().seed(text: ":", columns: 86, rows: 40, centre: centre)
         let bounds = try! #require(litBounds(bitmap))
         #expect(bounds.maxX - bounds.minX + 1 == metrics.colonWidth)
 
@@ -182,7 +186,7 @@ struct DigitRenderingTests {
 
 @Suite("Centring")
 struct CentringTests {
-    let renderer = DigitRenderer()
+    let renderer = DigitRenderer(metrics: .standard, face: .round)
     let metrics = GlyphMetrics.standard
 
     @Test("Digits are centred on the requested point", arguments: ["9:45", "08:30", "23:59", "07:20"])

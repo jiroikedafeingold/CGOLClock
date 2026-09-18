@@ -21,8 +21,10 @@ nonisolated struct GridLayout: Equatable {
     let columns: Int
     let rows: Int
     let cellSize: CGFloat
-    /// Grid cells per font cell.
+    /// Grid cells per font cell, for the bitmap faces.
     let glyphScale: Int
+    /// How wide the clock should be, in cells.
+    let clockWidth: Int
 
     init(
         viewSize: CGSize,
@@ -46,7 +48,8 @@ nonisolated struct GridLayout: Equatable {
         cellSize = width / CGFloat(columns)
         rows = max(DigitFont.height + 2, Int((height / cellSize).rounded(.down)))
         // Largest whole scale whose block still fits the requested fraction.
-        glyphScale = max(1, Int(CGFloat(columns) * clockWidthFraction) / base)
+        clockWidth = max(1, Int(CGFloat(columns) * clockWidthFraction))
+        glyphScale = max(1, clockWidth / base)
     }
 
     var pixelSize: CGSize {

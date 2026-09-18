@@ -51,7 +51,7 @@ struct ResolutionTests {
     func scaledGlyphsMatchBaseGlyphs() {
         let scale = 7
         let metrics = GlyphMetrics.standard.scaled(to: scale)
-        let renderer = DigitRenderer(metrics: metrics)
+        let renderer = DigitRenderer(metrics: metrics, face: .round)
         let columns = metrics.blockWidth * 2
         let rows = metrics.digitHeight * 3
         let centre = CellPoint(x: columns / 2, y: rows / 2)
@@ -179,6 +179,7 @@ struct SettingsPersistenceTests {
         #expect(settings.live == Palette.amberLED.live)
         #expect(settings.ghost == Palette.amberLED.ghost)
         #expect(settings.resolution == .matrix)
+        #expect(settings.face == .round)
     }
 
     @Test("Choices survive a relaunch")
@@ -190,11 +191,13 @@ struct SettingsPersistenceTests {
         first.live = RGB(0x12, 0x34, 0x56)
         first.ghost = RGB(0xAB, 0xCD, 0xEF)
         first.resolution = .pixel
+        first.face = .block
 
         let second = ClockSettings(defaults: defaults)
         #expect(second.live == RGB(0x12, 0x34, 0x56))
         #expect(second.ghost == RGB(0xAB, 0xCD, 0xEF))
         #expect(second.resolution == .pixel)
+        #expect(second.face == .block)
     }
 
     @Test("Resetting restores the defaults")
@@ -202,10 +205,12 @@ struct SettingsPersistenceTests {
         let settings = ClockSettings(defaults: freshDefaults("settings.reset"))
         settings.live = RGB(1, 2, 3)
         settings.resolution = .pixel
+        settings.face = .block
         settings.resetToDefaults()
 
         #expect(settings.live == Palette.amberLED.live)
         #expect(settings.resolution == .matrix)
+        #expect(settings.face == .round)
     }
 
     @Test("A colour survives the round trip through packed storage", arguments: [

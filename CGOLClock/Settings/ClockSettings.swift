@@ -33,6 +33,7 @@ final class ClockSettings {
     var live: RGB { didSet { save() } }
     var ghost: RGB { didSet { save() } }
     var resolution: Resolution { didSet { save() } }
+    var face: ClockFace { didSet { save() } }
 
     private let defaults: UserDefaults
 
@@ -40,6 +41,7 @@ final class ClockSettings {
         static let live = "display.liveColor"
         static let ghost = "display.ghostColor"
         static let resolution = "display.resolution"
+        static let face = "display.face"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -49,6 +51,8 @@ final class ClockSettings {
         ghost = defaults.rgb(forKey: Key.ghost) ?? fallback.ghost
         resolution = defaults.string(forKey: Key.resolution)
             .flatMap(Resolution.init(rawValue:)) ?? .matrix
+        face = defaults.string(forKey: Key.face)
+            .flatMap(ClockFace.init(rawValue:)) ?? .round
     }
 
     /// The palette these settings describe. Background and ghost opacity are
@@ -66,12 +70,14 @@ final class ClockSettings {
         live = Palette.amberLED.live
         ghost = Palette.amberLED.ghost
         resolution = .matrix
+        face = .round
     }
 
     private func save() {
         defaults.set(live.packedRGB, forKey: Key.live)
         defaults.set(ghost.packedRGB, forKey: Key.ghost)
         defaults.set(resolution.rawValue, forKey: Key.resolution)
+        defaults.set(face.rawValue, forKey: Key.face)
     }
 }
 

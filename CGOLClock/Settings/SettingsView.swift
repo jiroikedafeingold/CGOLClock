@@ -14,6 +14,23 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Picker("Typeface", selection: $settings.face) {
+                        ForEach(ClockFace.allCases) { face in
+                            Text(face.name).tag(face)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Typeface")
+                } footer: {
+                    Text(
+                        settings.resolution == .pixel
+                            ? "Drawn with a real font at full screen resolution."
+                            : "Drawn from hand-made pixel glyphs sized to the grid."
+                    )
+                }
+
+                Section {
                     Picker("Resolution", selection: $settings.resolution) {
                         ForEach(Resolution.allCases) { resolution in
                             Text(resolution.name).tag(resolution)

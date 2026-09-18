@@ -41,7 +41,8 @@ struct ClockView: View {
                 ),
                 displayScale: displayScale,
                 palette: settings.palette,
-                resolution: settings.resolution
+                resolution: settings.resolution,
+                face: settings.face
             )
 
             ZStack {
