@@ -2,12 +2,12 @@
 
 A digital clock for iPhone and iPad whose pixels are cells in Conway's Game of Life.
 
-Every minute the current time is drawn as chunky seven-segment digits on an LED-matrix
-grid. The digits hold for three seconds so you can read them, and then those lit pixels
-become the seed for Conway's Game of Life. The bars come apart, throw off gliders, and
-settle into still lifes over the rest of the minute. A subtle teal ghost of the original
-digits stays behind, so the time is still readable long after the amber cells have
-scattered. At the next minute the grid is reseeded with the new time.
+Every minute the current time is drawn as chunky pixel digits on an LED-matrix grid. The
+digits hold for three seconds so you can read them, and then those lit pixels become the
+seed for Conway's Game of Life. The strokes come apart, throw off gliders, and settle into
+still lifes over the rest of the minute. A subtle teal ghost marks the cells the digits
+started from, so the time is still readable long after the amber cells have scattered. At
+the next minute the grid is reseeded with the new time.
 
 Landscape, full-bleed, iPhone and iPad.
 
@@ -52,10 +52,10 @@ the LED-matrix look. The view then scales that image up with `.interpolation(.no
 the GPU does the magnification and the pixels stay hard-edged.
 
 Each frame draws in three passes: background, then live cells as filled squares, then the
-ghost outline as one-texel hollow rings. The ring goes **last and is hollow**, so where a
-live cell lands on a ghost cell you see an amber square framed by a teal outline rather
-than the ghost being painted over. That ordering is why the outline can't be baked into a
-static template.
+ghost as one-texel hollow rings. The ghost marks **the cells the digits started from**,
+and goes **last and hollow**, so a cell that is still alive reads as an amber square
+inside a teal frame and one that has died reads as an empty teal frame. That ordering is
+why the ghost can't be baked into a static template.
 
 Live cells are found by walking set bits with `trailingZeroBitCount` rather than scanning
 all 64 columns per word.
@@ -68,26 +68,35 @@ assumption.
 
 ### Layout
 
-The grid is always **76 columns**. That is not arbitrary: an `HH:MM` block is 38 cells
-wide with the standard glyph metrics, so 76 columns puts the clock at exactly half the
-screen width. Cell size then falls out of the view width, which means a larger screen gets
-physically larger cells rather than more of them — the chunky look survives the jump from
-iPhone to iPad.
+The grid is always **86 columns**. That is not arbitrary: an `HH:MM` block is 43 cells
+wide with the standard glyph metrics (four 8-wide digits, a 3-wide colon, four 2-wide
+gaps), so 86 columns puts the clock at exactly half the screen width. Cell size then falls
+out of the view width, which means a larger screen gets physically larger cells rather
+than more of them — the chunky look survives the jump from iPhone to iPad.
 
 | Device | Grid | Cell size |
 |---|---|---|
-| iPhone 17 Pro, landscape | 76 x 34 | 11.5 pt |
-| iPad Pro 13", landscape | 76 x 57 | 18.1 pt |
+| iPhone 17 Pro, landscape | 86 x 39 | 10.2 pt |
+| iPad Pro 13", landscape | 86 x 64 | 16.0 pt |
 
 Digits are centred on the **safe area**, not the raw screen, so the home indicator and
 Dynamic Island don't push them off-centre. They are also centred on their *drawn extent*
 rather than a fixed five-slot block — otherwise a single-digit hour like `9:45` sits
 visibly to the right.
 
-Digit slots are a fixed width, so a `1` — which lights only segments b and c — sits
-against the right of its slot rather than being re-centred. That keeps every other digit
-in the same place as the time changes, which matters when the teal outline is a fixed
-ghost of the seed.
+Digit slots are a fixed width, so a narrow glyph like `1` doesn't get re-centred inside
+its slot. That keeps every other digit in the same place as the time changes, which
+matters when the teal ghost is a fixed record of the seed.
+
+### The font
+
+The digits are a hand-drawn 8x14 pixel font, not a seven-segment renderer. Seven-segment
+glyphs are built from the same seven axis-aligned bars, so every one is near-symmetric and
+they all decay under Life in much the same way. These shapes deliberately mix closed bowls
+(0, 6, 8), long diagonals (1, 2, 4, 7) and open tails (3, 5, 9), so each digit evolves
+differently — a diagonal is a two-cell staircase and breaks up quite unlike a straight bar.
+
+The glyphs live as ASCII art in `DigitFont.swift`, which is what you edit to change them.
 
 ### Pacing
 
@@ -101,9 +110,10 @@ Roughly 270 generations a minute. The run loop sleeps for exactly one inter-gene
 interval rather than running on a display link — nothing on screen changes between
 generations, so there is no reason to wake up for frames that would be identical.
 
-Stroke thickness is two cells, deliberately. A one-cell-thick bar has too few neighbours
-to survive and evaporates in a single generation; at two cells thick the bars die back
-unevenly, shed gliders, and leave still-life blocks behind.
+Strokes are two cells thick throughout, deliberately. A one-cell stroke has too few
+neighbours to survive and evaporates in a single generation; at two cells the strokes die
+back unevenly, shed gliders, and leave still-life blocks behind. A test enforces that no
+glyph cell has fewer than two neighbours.
 
 The display is kept awake while the clock is on screen (`isIdleTimerDisabled`), released
 whenever the scene stops being active.
@@ -115,7 +125,7 @@ CGOLClock/
   Life/
     CellBitmap.swift      bit-per-cell grid; seeds and the outline dilation
     LifeGrid.swift        SWAR bitboard, toroidal wrap, the step
-    SevenSegment.swift    parametric digit stamping, time formatting
+    DigitFont.swift       8x14 pixel font, digit stamping, time formatting
     GridLayout.swift      cell size, grid dimensions, safe-area centring
   Render/
     Palette.swift         amber on black, teal ghost
@@ -128,7 +138,7 @@ Nothing below `ClockView` imports SwiftUI.
 
 ## Tests
 
-65 tests, Swift Testing. The ones worth knowing about:
+68 tests, Swift Testing. The ones worth knowing about:
 
 - **Cross-check against a naive implementation.** A dense pseudorandom soup is run for 30
   generations at widths 37, 64, 65, 76, 128 and 130 and compared cell-for-cell against a
@@ -144,6 +154,11 @@ Nothing below `ClockView` imports SwiftUI.
 - **Rasterising**, by reading texels back out of the rendered `CGImage`: that a ghost cell
   is a hollow ring with a dark centre, and that the ring stays teal while the interior
   turns amber when a live cell shares the cell.
+- **The font**, since it's hand-drawn data that's easy to get subtly wrong: every glyph is
+  the declared size and doesn't spill past it, all ten are pairwise distinct by at least
+  six cells, no cell is isolated enough to evaporate in one generation, and the set isn't
+  mirror- or flip-symmetric — which is the whole reason it replaced the seven-segment
+  renderer.
 
 ### Running them
 

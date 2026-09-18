@@ -8,9 +8,11 @@ import CoreGraphics
 /// a `litSize` square drawn inside it; the leftover row and column form the
 /// dark gutter that gives the LED-matrix look.
 ///
-/// Drawing order per frame is background, then live cells, then the ghost
-/// outline. The outline goes last and is stroked as a hollow ring rather than
-/// filled, so it stays visible even where a live cell occupies the same cell.
+/// Drawing order per frame is background, then live cells, then the ghost.
+/// The ghost marks the cells the digits started from, and goes last, stroked
+/// as a hollow ring rather than filled — so a cell that is still alive reads
+/// as an amber square inside a teal frame, and one that has died reads as an
+/// empty teal frame.
 nonisolated final class FrameRasterizer {
     let columns: Int
     let rows: Int
@@ -23,10 +25,11 @@ nonisolated final class FrameRasterizer {
 
     private let backgroundColor: UInt32
     private let liveColor: UInt32
-    private let outlineColor: UInt32
+    private let ghostColor: UInt32
 
-    /// Row-major cell indices of the ghost outline, rebuilt once per minute.
-    private var outlineCells: [Int] = []
+    /// Row-major indices of the cells the digits started from, rebuilt once
+    /// per minute.
+    private var ghostCells: [Int] = []
 
     private let frame: UnsafeMutablePointer<UInt32>
     private let context: CGContext
@@ -45,7 +48,7 @@ nonisolated final class FrameRasterizer {
 
         self.backgroundColor = palette.background.packed
         self.liveColor = palette.live.packed
-        self.outlineColor = palette.outlineOverBackground.packed
+        self.ghostColor = palette.ghostOverBackground.packed
 
         frame = .allocate(capacity: texelCount)
         frame.initialize(repeating: backgroundColor, count: texelCount)
@@ -75,14 +78,14 @@ nonisolated final class FrameRasterizer {
         CGSize(width: pixelWidth, height: pixelHeight)
     }
 
-    /// Records the ghost outline of the seed. Called once when the minute
-    /// changes; the cells are stroked afresh on every frame.
-    func setOutline(_ outline: CellBitmap) {
-        precondition(outline.width == columns && outline.height == rows, "size mismatch")
-        outlineCells.removeAll(keepingCapacity: true)
+    /// Records which cells the digits started from. Called once when the
+    /// minute changes; the cells are stroked afresh on every frame.
+    func setGhost(_ ghost: CellBitmap) {
+        precondition(ghost.width == columns && ghost.height == rows, "size mismatch")
+        ghostCells.removeAll(keepingCapacity: true)
         for y in 0..<rows {
-            for x in 0..<columns where outline[x, y] {
-                outlineCells.append(y * columns + x)
+            for x in 0..<columns where ghost[x, y] {
+                ghostCells.append(y * columns + x)
             }
         }
     }
@@ -108,7 +111,7 @@ nonisolated final class FrameRasterizer {
         }
 
         // Last, so a live cell underneath shows through the middle of the ring.
-        for cell in outlineCells {
+        for cell in ghostCells {
             strokeCell(x: cell % columns, y: cell / columns)
         }
 
@@ -137,13 +140,13 @@ nonisolated final class FrameRasterizer {
         let topRow = top * pixelWidth + left
         let bottomRow = (top + last) * pixelWidth + left
         for column in 0..<litSize {
-            frame[topRow + column] = outlineColor
-            frame[bottomRow + column] = outlineColor
+            frame[topRow + column] = ghostColor
+            frame[bottomRow + column] = ghostColor
         }
         for row in 1..<last {
             let base = (top + row) * pixelWidth + left
-            frame[base] = outlineColor
-            frame[base + last] = outlineColor
+            frame[base] = ghostColor
+            frame[base + last] = ghostColor
         }
     }
 }

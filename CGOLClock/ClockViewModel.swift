@@ -41,7 +41,7 @@ final class ClockViewModel {
 
     private static let minuteLength = 60.0
 
-    private let renderer = SevenSegmentRenderer()
+    private let renderer = DigitRenderer()
     private var display: Display?
     private var seededMinute: Int?
     /// Where the digits are centred, in grid coordinates.
@@ -132,7 +132,9 @@ final class ClockViewModel {
             centre: clockCentre
         )
         display.grid.load(seed)
-        display.rasterizer.setOutline(seed.outline())
+        // The ghost marks the seed cells themselves, so the digits stay
+        // readable in place as Life eats them.
+        display.rasterizer.setGhost(seed)
         seededMinute = minuteIndex(of: date)
     }
 

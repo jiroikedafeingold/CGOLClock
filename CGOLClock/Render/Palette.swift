@@ -29,23 +29,23 @@ nonisolated struct RGB: Equatable {
 nonisolated struct Palette {
     let background: RGB
     let live: RGB
-    let outline: RGB
-    let outlineOpacity: Double
+    let ghost: RGB
+    let ghostOpacity: Double
 
     static let amberLED = Palette(
         background: RGB(0x0A, 0x08, 0x06),
         live: RGB(0xFF, 0xB0, 0x00),
-        outline: RGB(0x34, 0xD3, 0xC8),
-        outlineOpacity: 0.5
+        ghost: RGB(0x34, 0xD3, 0xC8),
+        ghostOpacity: 0.42
     )
 
-    /// The outline already composited over the background, so the rasteriser
+    /// The ghost already composited over the background, so the rasteriser
     /// writes opaque texels and never has to blend per frame.
     ///
     /// The opacity is tuned for a one-texel stroke, which reads far lighter
     /// than a filled square would at the same value — and it has to stay
     /// legible where it crosses a lit cell, not just the background.
-    var outlineOverBackground: RGB {
-        outline.blended(over: background, alpha: outlineOpacity)
+    var ghostOverBackground: RGB {
+        ghost.blended(over: background, alpha: ghostOpacity)
     }
 }

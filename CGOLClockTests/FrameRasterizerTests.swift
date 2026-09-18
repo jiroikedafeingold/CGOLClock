@@ -40,7 +40,7 @@ struct RenderedFrame {
 private let palette = Palette.amberLED
 private let background = palette.background.packed & 0x00FF_FFFF
 private let live = palette.live.packed & 0x00FF_FFFF
-private let ghost = palette.outlineOverBackground.packed & 0x00FF_FFFF
+private let ghost = palette.ghostOverBackground.packed & 0x00FF_FFFF
 
 @Suite("Frame rasteriser")
 struct FrameRasterizerTests {
@@ -50,28 +50,28 @@ struct FrameRasterizerTests {
     let texelsPerCell = 8
     let litSize = 6
 
-    private func render(live liveCells: [CellPoint], outline outlineCells: [CellPoint]) -> RenderedFrame {
+    private func render(live liveCells: [CellPoint], ghost ghostCells: [CellPoint]) -> RenderedFrame {
         let grid = LifeGrid(width: columns, height: rows)
         for cell in liveCells { grid[cell.x, cell.y] = true }
 
-        var outline = CellBitmap(width: columns, height: rows)
-        for cell in outlineCells { outline[cell.x, cell.y] = true }
+        var ghost = CellBitmap(width: columns, height: rows)
+        for cell in ghostCells { ghost[cell.x, cell.y] = true }
 
         let rasterizer = FrameRasterizer(columns: columns, rows: rows)
-        rasterizer.setOutline(outline)
+        rasterizer.setGhost(ghost)
         return RenderedFrame(rasterizer.image(for: grid)!)
     }
 
     @Test("The image is one texel block per cell")
     func imageSize() {
-        let frame = render(live: [], outline: [])
+        let frame = render(live: [], ghost: [])
         #expect(frame.width == columns * texelsPerCell)
         #expect(frame.height == rows * texelsPerCell)
     }
 
-    @Test("An empty grid with no outline is pure background")
+    @Test("An empty grid with no ghost is pure background")
     func emptyIsBackground() {
-        let frame = render(live: [], outline: [])
+        let frame = render(live: [], ghost: [])
         for y in 0..<frame.height {
             for x in 0..<frame.width {
                 #expect(frame[x, y] == background)
@@ -81,7 +81,7 @@ struct FrameRasterizerTests {
 
     @Test("A live cell is a filled square with a gutter around it")
     func liveCellIsFilled() {
-        let frame = render(live: [CellPoint(x: 3, y: 2)], outline: [])
+        let frame = render(live: [CellPoint(x: 3, y: 2)], ghost: [])
         let left = 3 * texelsPerCell
         let top = 2 * texelsPerCell
 
@@ -96,9 +96,9 @@ struct FrameRasterizerTests {
     }
 
     /// The point of the change: the ghost is a hollow square, not a filled one.
-    @Test("An outline cell is a hollow ring with a dark centre")
-    func outlineCellIsHollow() {
-        let frame = render(live: [], outline: [CellPoint(x: 4, y: 3)])
+    @Test("A ghost cell is a hollow ring with a dark centre")
+    func ghostCellIsHollow() {
+        let frame = render(live: [], ghost: [CellPoint(x: 4, y: 3)])
         let left = 4 * texelsPerCell
         let top = 3 * texelsPerCell
         let last = litSize - 1
@@ -122,7 +122,7 @@ struct FrameRasterizerTests {
     @Test("The ghost ring stays visible where a live cell shares the cell")
     func ghostSurvivesALiveCell() {
         let cell = CellPoint(x: 5, y: 4)
-        let frame = render(live: [cell], outline: [cell])
+        let frame = render(live: [cell], ghost: [cell])
         let left = cell.x * texelsPerCell
         let top = cell.y * texelsPerCell
         let last = litSize - 1
@@ -149,21 +149,21 @@ struct FrameRasterizerTests {
         #expect(live != background)
     }
 
-    @Test("Re-setting the outline replaces the previous one")
-    func outlineIsReplaced() {
+    @Test("Re-setting the ghost replaces the previous one")
+    func ghostIsReplaced() {
         let rasterizer = FrameRasterizer(columns: columns, rows: rows)
         let grid = LifeGrid(width: columns, height: rows)
 
         var first = CellBitmap(width: columns, height: rows)
         first[2, 2] = true
-        rasterizer.setOutline(first)
+        rasterizer.setGhost(first)
 
         var second = CellBitmap(width: columns, height: rows)
         second[7, 5] = true
-        rasterizer.setOutline(second)
+        rasterizer.setGhost(second)
 
         let frame = RenderedFrame(rasterizer.image(for: grid)!)
-        #expect(frame[2 * texelsPerCell, 2 * texelsPerCell] == background, "stale outline left behind")
+        #expect(frame[2 * texelsPerCell, 2 * texelsPerCell] == background, "stale ghost left behind")
         #expect(frame[7 * texelsPerCell, 5 * texelsPerCell] == ghost)
     }
 }

@@ -53,29 +53,4 @@ nonisolated struct CellBitmap: Equatable {
         words.reduce(0) { $0 + $1.nonzeroBitCount }
     }
 
-    /// The one-cell ring hugging the outside of the live shape: cells that touch
-    /// a live cell in the 8-neighbourhood but are not live themselves.
-    ///
-    /// Deliberately unwrapped — this is a static overlay tracing the seed, and
-    /// the clock block never sits against the grid edge. Runs once per minute.
-    func outline() -> CellBitmap {
-        var result = CellBitmap(width: width, height: height)
-        for y in 0..<height {
-            for x in 0..<width where !self[x, y] {
-                if touchesLiveCell(x: x, y: y) {
-                    result[x, y] = true
-                }
-            }
-        }
-        return result
-    }
-
-    private func touchesLiveCell(x: Int, y: Int) -> Bool {
-        for dy in -1...1 {
-            for dx in -1...1 where !(dx == 0 && dy == 0) {
-                if self[x + dx, y + dy] { return true }
-            }
-        }
-        return false
-    }
 }
