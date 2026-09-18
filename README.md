@@ -129,7 +129,7 @@ Tap the screen to reveal a gear in the upper right; it fades after eight seconds
 | Time colour | white |
 | Time opacity | 30% |
 | Typeface | Round (of six) |
-| What comes alive | Outline |
+| What comes alive | Scatter, 20% |
 | Resolution | Pixel |
 
 **Typefaces.** Six: Round, Block, Neue, Serif, Narrow, Type. At pixel resolution each

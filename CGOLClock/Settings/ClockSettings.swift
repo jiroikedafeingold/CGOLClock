@@ -89,7 +89,7 @@ final class ClockSettings {
         face = defaults.string(forKey: Key.face)
             .flatMap(ClockFace.init(rawValue:)) ?? .round
         seedStyle = defaults.string(forKey: Key.seedStyle)
-            .flatMap(SeedStyle.init(rawValue:)) ?? .outline
+            .flatMap(SeedStyle.init(rawValue:)) ?? .scattered
         scatterDensity = defaults.object(forKey: Key.scatter) as? Double ?? Self.defaultScatter
     }
 
@@ -120,7 +120,7 @@ final class ClockSettings {
         timeOpacity = Self.defaultOpacity
         resolution = .pixel
         face = .round
-        seedStyle = .outline
+        seedStyle = .scattered
         scatterDensity = Self.defaultScatter
     }
 

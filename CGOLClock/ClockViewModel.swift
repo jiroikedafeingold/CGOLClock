@@ -232,6 +232,13 @@ final class ClockViewModel {
         display.rasterizer.setGhost(filled)
         currentSeed = filled
         seededMinute = minuteIndex(of: date)
+
+        #if DEBUG
+        let style = effectiveSeedStyle.rawValue
+        Self.log.debug(
+            "seeded \(text, privacy: .public) as \(style, privacy: .public): \(living.populationCount) live of \(filled.populationCount) glyph cells"
+        )
+        #endif
     }
 
     /// Outlining needs a stroke many cells wide, which rules out the 8x14
