@@ -6,33 +6,58 @@ nonisolated struct CellPoint: Equatable {
     let y: Int
 }
 
-/// Works out how many cells fit on screen and how big each one is.
+/// Works out how many cells fit on screen, how big each one is, and how far
+/// the font has to be scaled up to keep the clock at the same size.
 ///
-/// The column count is fixed by the requirement that the `HH:MM` block occupy
-/// `clockWidthFraction` of the width — with the standard metrics that is 38
-/// cells out of 76. Cell size then falls out of the view width, so a larger
-/// screen gets physically larger pixels rather than more of them, and the
-/// chunky LED-matrix look survives the jump from iPhone to iPad.
+/// In `.matrix` the column count is fixed by the requirement that an `HH:MM`
+/// block occupy `clockWidthFraction` of the width — 43 cells out of 86. Cell
+/// size then falls out of the view width, so a larger screen gets physically
+/// larger cells rather than more of them.
+///
+/// In `.pixel` there is one cell per device pixel, and the glyph scale takes
+/// up the slack so the digits still fill half the width — they just erode a
+/// grain at a time instead of a block at a time.
 nonisolated struct GridLayout: Equatable {
     let columns: Int
     let rows: Int
     let cellSize: CGFloat
+    /// Grid cells per font cell.
+    let glyphScale: Int
 
-    init(viewSize: CGSize, metrics: GlyphMetrics = .standard, clockWidthFraction: CGFloat = 0.5) {
-        let wanted = CGFloat(metrics.blockWidth) / clockWidthFraction
-        // Two spare columns so the clock never touches the wrapping edge.
-        columns = max(metrics.blockWidth + 2, Int(wanted.rounded()))
+    init(
+        viewSize: CGSize,
+        displayScale: CGFloat = 1,
+        resolution: Resolution = .matrix,
+        clockWidthFraction: CGFloat = 0.5
+    ) {
+        let base = GlyphMetrics.baseBlockWidth
+        let matrixColumns = max(base + 2, Int((CGFloat(base) / clockWidthFraction).rounded()))
 
         let width = max(viewSize.width, 1)
         let height = max(viewSize.height, 1)
+
+        switch resolution {
+        case .matrix:
+            columns = matrixColumns
+        case .pixel:
+            columns = max(matrixColumns, Int((width * max(displayScale, 1)).rounded()))
+        }
+
         cellSize = width / CGFloat(columns)
-        // Two spare rows for the same reason.
-        rows = max(metrics.blockHeight + 2, Int((height / cellSize).rounded(.down)))
+        rows = max(DigitFont.height + 2, Int((height / cellSize).rounded(.down)))
+        // Largest whole scale whose block still fits the requested fraction.
+        glyphScale = max(1, Int(CGFloat(columns) * clockWidthFraction) / base)
     }
 
     var pixelSize: CGSize {
         CGSize(width: CGFloat(columns) * cellSize, height: CGFloat(rows) * cellSize)
     }
+
+    var metrics: GlyphMetrics {
+        GlyphMetrics.standard.scaled(to: glyphScale)
+    }
+
+    var cellCount: Int { columns * rows }
 
     /// The cell containing `point`, which is in view coordinates. Used to place
     /// the clock at the centre of the safe area rather than the centre of the

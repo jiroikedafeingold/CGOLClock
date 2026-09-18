@@ -46,25 +46,57 @@ last part is where the bodies are buried, so it is tested directly.
 
 ### Rendering
 
-The grid is rasterised into a small `CGImage` — one `8x8` texel block per cell, with a
-`6x6` square drawn inside it. The leftover row and column are the dark gutter that gives
-the LED-matrix look. The view then scales that image up with `.interpolation(.none)`, so
-the GPU does the magnification and the pixels stay hard-edged.
+The grid is rasterised into a `CGImage`. In LED Matrix resolution that is one `8x8` texel
+block per cell with a `6x6` square inside it — the leftover row and column are the dark
+gutter — and the view scales it up with `.interpolation(.none)`, so the GPU does the
+magnification and the pixels stay hard-edged. In Pixel resolution it is one texel per cell
+and is displayed one-to-one.
 
 Each frame draws in three passes: background, then live cells as filled squares, then the
-ghost as one-texel hollow rings. The ghost marks **the cells the digits started from**,
-and goes **last and hollow**, so a cell that is still alive reads as an amber square
-inside a teal frame and one that has died reads as an empty teal frame. That ordering is
-why the ghost can't be baked into a static template.
+ghost. The ghost marks **the cells the digits started from** and goes **last**, so it is
+never painted over — which is why it can't be baked into a static template. Where a cell
+is big enough the ghost is a hollow ring, so a live cell reads as a square inside a frame
+and a dead one as an empty frame; at one texel per cell it blends instead.
 
 Live cells are found by walking set bits with `trailingZeroBitCount` rather than scanning
 all 64 columns per word.
 
-Measured on an iPhone 17 Pro simulator in a Debug (`-Onone`) build: **~40µs** for the Life
-step and **~250µs** for the raster, per generation. At the peak rate of 10 generations a
-second that is well under 1% of the main thread, which is why none of this needs to leave
-the main actor. A `#if DEBUG` logger reports those numbers rather than leaving it to
-assumption.
+Measured per generation on an iPhone 17 Pro simulator, optimised build:
+
+| | Life step | Raster | Cells |
+|---|---|---|---|
+| LED Matrix | ~40 µs | ~0.3 ms | 3.4 k |
+| Pixel | ~0.3 ms | ~5 ms | 3.2 M |
+
+At the peak rate of 10 generations a second even pixel resolution is around 6% of the
+main thread, which is why none of this needs to leave the main actor. A `#if DEBUG`
+logger reports the numbers rather than leaving it to assumption.
+
+Note that an unoptimised (`-Onone`) build is roughly 4–20x slower on these paths — pixel
+resolution measures ~3 ms step and ~20 ms raster there. That is the scattered per-cell
+writes losing their inlining, not a memory-bandwidth wall; judge the mode in a Release
+build.
+
+### Settings
+
+Tap the screen to reveal a gear in the upper right; it fades after eight seconds. The
+sheet sets the cell colour, the time colour, and the resolution.
+
+| Resolution | Grid (iPhone 17 Pro landscape) | Cell | Glyph scale |
+|---|---|---|---|
+| LED Matrix | 86 x 39 = 3,354 cells | 10.2 pt | 1 |
+| Pixel | 2622 x 1206 = 3,162,132 cells | 1 device pixel | 30 |
+
+Pixel resolution puts one cell on every device pixel, and scales the font up by the same
+factor so the clock stays exactly half the screen width. The digits therefore look the
+same size in both modes — they just erode a grain at a time instead of a block at a time,
+because a stroke that was 2 cells thick is now 60.
+
+At one texel per cell there is no room to draw a ghost ring around a live square, so a
+cell that is both takes a **blended colour** instead — an even mix of the two, which
+lands on a hue belonging to neither. During the three-second hold every seed cell is both
+live and ghost, so the whole clock shows in that mixed colour and then resolves towards
+the time colour as Life eats the interiors.
 
 ### Layout
 
@@ -102,13 +134,17 @@ The glyphs live as ASCII art in `DigitFont.swift`, which is what you edit to cha
 
 ```
 0s ─────── 3s ──────────── 9s ─────────────────────────────── 60s
-   hold        ramp up          exponential decay
-   (digits)    5 → 10 gen/s     10 → 1.5 gen/s
+   hold        ramp up          hold at speed
+   (digits)    5 → 10 gen/s     10 gen/s
 ```
 
-Roughly 270 generations a minute. The run loop sleeps for exactly one inter-generation
-interval rather than running on a display link — nothing on screen changes between
-generations, so there is no reason to wake up for frames that would be identical.
+Roughly 550 generations a minute. The rate eases in so the first few generations — where
+the strokes come apart — are watchable, then holds; the field usually settles into still
+lifes and blinkers well before the minute is out, and holding the pace looks better than
+watching a frozen grid tick over slowly. The run loop sleeps for exactly one
+inter-generation interval rather than running on a display link — nothing on screen
+changes between generations, so there is no reason to wake up for frames that would be
+identical.
 
 Strokes are two cells thick throughout, deliberately. A one-cell stroke has too few
 neighbours to survive and evaporates in a single generation; at two cells the strokes die
@@ -123,22 +159,25 @@ whenever the scene stops being active.
 ```
 CGOLClock/
   Life/
-    CellBitmap.swift      bit-per-cell grid; seeds and the outline dilation
+    CellBitmap.swift      bit-per-cell grid, shared layout with LifeGrid
     LifeGrid.swift        SWAR bitboard, toroidal wrap, the step
     DigitFont.swift       8x14 pixel font, digit stamping, time formatting
     GridLayout.swift      cell size, grid dimensions, safe-area centring
   Render/
     Palette.swift         amber on black, teal ghost
     FrameRasterizer.swift pixel buffer -> CGImage
+  Settings/
+    ClockSettings.swift   persisted colours and resolution
+    SettingsView.swift    the settings sheet
   ClockViewModel.swift    @Observable; the run loop, reseeding, pacing
-  ClockView.swift         GeometryReader + Image
+  ClockView.swift         GeometryReader + Image, tap-to-reveal settings
 ```
 
 Nothing below `ClockView` imports SwiftUI.
 
 ## Tests
 
-68 tests, Swift Testing. The ones worth knowing about:
+87 tests, Swift Testing. The ones worth knowing about:
 
 - **Cross-check against a naive implementation.** A dense pseudorandom soup is run for 30
   generations at widths 37, 64, 65, 76, 128 and 130 and compared cell-for-cell against a
@@ -154,6 +193,10 @@ Nothing below `ClockView` imports SwiftUI.
 - **Rasterising**, by reading texels back out of the rendered `CGImage`: that a ghost cell
   is a hollow ring with a dark centre, and that the ring stays teal while the interior
   turns amber when a live cell shares the cell.
+- **Resolution and settings**: that the clock stays half the screen width in both modes
+  despite a 30x difference in grid fineness, that a scaled glyph is exactly the base glyph
+  blown up, that a live-and-ghost cell takes the combined colour, and that choices survive
+  a relaunch.
 - **The font**, since it's hand-drawn data that's easy to get subtly wrong: every glyph is
   the declared size and doesn't spill past it, all ten are pairwise distinct by at least
   six cells, no cell is isolated enough to evaporate in one generation, and the set isn't

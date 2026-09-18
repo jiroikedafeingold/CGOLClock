@@ -8,17 +8,23 @@ import UIKit
 ///
 /// The grid image is rendered at one texel block per cell and scaled up with
 /// nearest-neighbour filtering, so the pixels stay square and hard-edged at any
-/// size. The grid is always 76 columns wide, which means an iPad shows the same
-/// layout as an iPhone with physically larger cells rather than more of them.
+/// size. In pixel resolution the image is already at device scale and is shown
+/// one-to-one.
 ///
 /// The geometry reader deliberately does *not* ignore the safe area — it needs
 /// the real insets to centre the digits on the visible area. The grid itself is
 /// then expanded back out to the full screen so Life runs edge to edge.
 struct ClockView: View {
     @State private var model = ClockViewModel()
+    @State private var settings = ClockSettings()
+    @State private var showsControls = false
+    @State private var showsSettings = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.displayScale) private var displayScale
 
-    private let palette = Palette.amberLED
+    /// How long the settings button lingers after a tap. Long enough to
+    /// notice it and reach for it; short enough not to sit over the clock.
+    private let controlLinger = Duration.seconds(8)
 
     var body: some View {
         GeometryReader { proxy in
@@ -27,13 +33,19 @@ struct ClockView: View {
                 width: proxy.size.width + insets.leading + insets.trailing,
                 height: proxy.size.height + insets.top + insets.bottom
             )
-            let safeRect = CGRect(
-                origin: CGPoint(x: insets.leading, y: insets.top),
-                size: proxy.size
+            let configuration = ClockViewModel.DisplayConfiguration(
+                viewSize: fullSize,
+                safeRect: CGRect(
+                    origin: CGPoint(x: insets.leading, y: insets.top),
+                    size: proxy.size
+                ),
+                displayScale: displayScale,
+                palette: settings.palette,
+                resolution: settings.resolution
             )
 
             ZStack {
-                Color(palette.background)
+                Color(settings.palette.background)
                 if let frame = model.frame {
                     Image(decorative: frame, scale: 1)
                         .interpolation(.none)
@@ -43,8 +55,12 @@ struct ClockView: View {
             }
             .frame(width: fullSize.width, height: fullSize.height)
             .offset(x: -insets.leading, y: -insets.top)
-            .onChange(of: safeRect, initial: true) { _, rect in
-                model.resize(to: fullSize, safeRect: rect)
+            .contentShape(.rect)
+            .onTapGesture {
+                withAnimation(.easeOut(duration: 0.2)) { showsControls = true }
+            }
+            .onChange(of: configuration, initial: true) { _, configuration in
+                model.apply(configuration)
             }
             // Restarts on scene phase changes; idle while backgrounded so an
             // inactive window isn't stepping the grid ten times a second.
@@ -57,8 +73,44 @@ struct ClockView: View {
                 await model.run()
             }
         }
-        .background(Color(palette.background).ignoresSafeArea())
+        .overlay(alignment: .topTrailing) { settingsButton }
+        .background(Color(settings.palette.background).ignoresSafeArea())
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showsSettings) {
+            SettingsView(settings: settings)
+        }
+        // Fades the button back out, unless the sheet is up or another tap
+        // restarts the wait.
+        .task(id: TimerKey(visible: showsControls, presenting: showsSettings)) {
+            guard showsControls, !showsSettings else { return }
+            try? await Task.sleep(for: controlLinger)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.4)) { showsControls = false }
+        }
+    }
+
+    @ViewBuilder
+    private var settingsButton: some View {
+        if showsControls {
+            Button {
+                showsSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.title2)
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: .circle)
+            }
+            .tint(.primary)
+            .padding(20)
+            .transition(.opacity)
+            .accessibilityLabel("Display settings")
+        }
+    }
+
+    /// Restarts the auto-hide countdown when either input changes.
+    private struct TimerKey: Equatable {
+        let visible: Bool
+        let presenting: Bool
     }
 }
 
@@ -78,17 +130,6 @@ private func keepDisplayAwake(_ awake: Bool) {
         .debug("idle timer disabled: \(UIApplication.shared.isIdleTimerDisabled)")
     #endif
     #endif
-}
-
-private extension Color {
-    init(_ rgb: RGB) {
-        self.init(
-            .sRGB,
-            red: Double(rgb.red) / 255,
-            green: Double(rgb.green) / 255,
-            blue: Double(rgb.blue) / 255
-        )
-    }
 }
 
 #Preview {

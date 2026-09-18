@@ -189,20 +189,36 @@ nonisolated enum DigitFont {
     ]
 }
 
-/// Cell dimensions of the clock digits. Glyph size comes from `DigitFont`;
-/// only the spacing is tunable.
+/// Cell dimensions of the clock digits.
+///
+/// Every measurement is the base value times `scale`, so the same font fills
+/// the same fraction of the screen whether a cell is a chunky LED or a single
+/// device pixel. At `scale` 1 an `HH:MM` block is 43 cells wide.
 nonisolated struct GlyphMetrics: Equatable {
-    var gap = 2
-    var colonWidth = 3
+    var baseGap = 2
+    var baseColonWidth = 3
+    /// Grid cells per font cell.
+    var scale = 1
 
     static let standard = GlyphMetrics()
 
-    var digitWidth: Int { DigitFont.width }
-    var digitHeight: Int { DigitFont.height }
+    /// Block width at `scale` 1, which fixes the grid's column count.
+    static var baseBlockWidth: Int { GlyphMetrics().blockWidth }
+
+    var gap: Int { baseGap * scale }
+    var colonWidth: Int { baseColonWidth * scale }
+    var digitWidth: Int { DigitFont.width * scale }
+    var digitHeight: Int { DigitFont.height * scale }
 
     /// Cell width of an `HH:MM` block: four digits, a colon, and four gaps.
     var blockWidth: Int { 4 * digitWidth + colonWidth + 4 * gap }
     var blockHeight: Int { digitHeight }
+
+    func scaled(to scale: Int) -> GlyphMetrics {
+        var copy = self
+        copy.scale = max(1, scale)
+        return copy
+    }
 }
 
 /// Stamps `HH:MM` into a `CellBitmap`.
@@ -264,12 +280,18 @@ nonisolated struct DigitRenderer {
     }
 
     private func draw(digit: Int, at x: Int, y: Int, into bitmap: inout CellBitmap) {
+        let scale = metrics.scale
         for (row, mask) in DigitFont.glyphs[digit].enumerated() {
             var bits = mask
             while bits != 0 {
                 let column = bits.trailingZeroBitCount
                 bits &= bits - 1
-                bitmap[x + column, y + row] = true
+                bitmap.fill(
+                    x: x + column * scale,
+                    y: y + row * scale,
+                    width: scale,
+                    height: scale
+                )
             }
         }
     }

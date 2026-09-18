@@ -28,65 +28,125 @@ final class ClockViewModel {
     private let rampDuration = 6.0
 
     /// Generations per second through the minute. The rate eases up from
-    /// `startRate` to `peakRate` across `rampDuration`, then decays to
-    /// `endRate` by the end of the minute.
+    /// `startRate` to `peakRate` across `rampDuration` and then stays there —
+    /// the field usually settles into still lifes and blinkers well before the
+    /// minute is out, and holding the pace looks better than watching a frozen
+    /// grid tick over slowly. Works out to roughly 550 generations a minute.
     ///
     /// `startRate` is a middle pace rather than a crawl: the first few
-    /// generations are where the solid bars come apart, which is worth seeing,
-    /// but one frame every two-thirds of a second reads as stalled. Works out
-    /// to roughly 270 generations a minute.
+    /// generations are where the strokes come apart, which is worth seeing,
+    /// but one frame every two-thirds of a second reads as stalled.
     private let startRate = 5.0
     private let peakRate = 10.0
-    private let endRate = 1.5
 
-    private static let minuteLength = 60.0
-
-    private let renderer = DigitRenderer()
     private var display: Display?
     private var seededMinute: Int?
+    private var configuration: DisplayConfiguration?
     /// Where the digits are centred, in grid coordinates.
     private var clockCentre = CellPoint(x: 0, y: 0)
+    /// Kept so the ghost can be restored when only the palette changes.
+    private var currentSeed: CellBitmap?
 
-    /// The three pieces that have to be resized together.
+    /// Everything the display depends on. The view recomputes this from its
+    /// geometry and the user's settings and hands it over.
+    nonisolated struct DisplayConfiguration: Equatable {
+        var viewSize: CGSize
+        var safeRect: CGRect
+        var displayScale: CGFloat
+        var palette: Palette
+        var resolution: Resolution
+    }
+
+    /// The pieces that have to be rebuilt together.
     private struct Display {
         let layout: GridLayout
         let grid: LifeGrid
-        let rasterizer: FrameRasterizer
+        var rasterizer: FrameRasterizer
     }
 
-    // MARK: - Layout
+    // MARK: - Configuration
 
-    /// Rebuilds the grid for a new view size. Cheap and idempotent when the
-    /// size resolves to the same layout, so it is safe to call on every pass.
+    /// Applies a new geometry or palette. Cheap and idempotent when nothing
+    /// has changed, so it is safe to call on every pass.
     ///
     /// The grid always covers the whole screen — Life runs edge to edge, under
-    /// the notch and home indicator — but the digits are centred on `safeRect`
-    /// so they read as centred to the eye.
-    func resize(to viewSize: CGSize, safeRect: CGRect) {
-        let layout = GridLayout(viewSize: viewSize)
-        let centre = layout.cell(at: CGPoint(x: safeRect.midX, y: safeRect.midY))
-        guard display?.layout != layout || clockCentre != centre else { return }
-        clockCentre = centre
+    /// the notch and home indicator — but the digits are centred on the safe
+    /// area so they read as centred to the eye.
+    ///
+    /// A palette-only change rebuilds the rasteriser but keeps the grid, so
+    /// picking a colour doesn't restart the simulation mid-minute.
+    func apply(_ configuration: DisplayConfiguration) {
+        guard configuration != self.configuration else { return }
+        let previous = self.configuration
+        self.configuration = configuration
 
+        let layout = GridLayout(
+            viewSize: configuration.viewSize,
+            displayScale: configuration.displayScale,
+            resolution: configuration.resolution
+        )
+        let centre = layout.cell(
+            at: CGPoint(x: configuration.safeRect.midX, y: configuration.safeRect.midY)
+        )
+        let style = RenderStyle.forResolution(configuration.resolution)
+
+        if let display, display.layout == layout, clockCentre == centre,
+           display.rasterizer.style == style {
+            guard display.rasterizer.palette != configuration.palette else { return }
+            recolour(display, palette: configuration.palette, style: style)
+            return
+        }
+
+        clockCentre = centre
         let display = Display(
             layout: layout,
             grid: LifeGrid(width: layout.columns, height: layout.rows),
-            rasterizer: FrameRasterizer(columns: layout.columns, rows: layout.rows)
+            rasterizer: FrameRasterizer(
+                columns: layout.columns,
+                rows: layout.rows,
+                palette: configuration.palette,
+                style: style
+            )
         )
         self.display = display
-        // Seed straight away so a resize never shows a blank frame.
+        logLayout(layout, configuration: configuration, centre: centre, rebuiltFrom: previous)
+        // Seed straight away so a change never shows a blank frame.
         reseed(display, at: Date())
         frame = display.rasterizer.image(for: display.grid)
+    }
 
+    /// Swaps in a rasteriser with new colours, leaving the simulation running.
+    private func recolour(_ display: Display, palette: Palette, style: RenderStyle) {
+        var updated = display
+        updated.rasterizer = FrameRasterizer(
+            columns: display.layout.columns,
+            rows: display.layout.rows,
+            palette: palette,
+            style: style
+        )
+        if let currentSeed { updated.rasterizer.setGhost(currentSeed) }
+        self.display = updated
+        frame = updated.rasterizer.image(for: updated.grid)
+    }
+
+    private func logLayout(
+        _ layout: GridLayout,
+        configuration: DisplayConfiguration,
+        centre: CellPoint,
+        rebuiltFrom previous: DisplayConfiguration?
+    ) {
         #if DEBUG
+        let size = configuration.viewSize
         Self.log.debug(
             """
-            view \(viewSize.width, format: .fixed(precision: 1))x\(viewSize.height, format: .fixed(precision: 1)) \
-            -> \(layout.columns)x\(layout.rows) cells at \(layout.cellSize, format: .fixed(precision: 2))pt; \
-            safe \(safeRect.minX, format: .fixed(precision: 1)),\(safeRect.minY, format: .fixed(precision: 1)) \
-            \(safeRect.width, format: .fixed(precision: 1))x\(safeRect.height, format: .fixed(precision: 1)) \
-            mid \(safeRect.midX, format: .fixed(precision: 1)),\(safeRect.midY, format: .fixed(precision: 1)); \
-            centre cell \(centre.x),\(centre.y) of \(layout.columns)x\(layout.rows)
+            \(configuration.resolution.rawValue, privacy: .public) \
+            view \(size.width, format: .fixed(precision: 1))x\(size.height, format: .fixed(precision: 1)) \
+            @\(configuration.displayScale, format: .fixed(precision: 0))x \
+            -> \(layout.columns)x\(layout.rows) cells \
+            (\(layout.cellCount) total) at \(layout.cellSize, format: .fixed(precision: 2))pt, \
+            glyph scale \(layout.glyphScale); \
+            centre cell \(centre.x),\(centre.y); \
+            first layout: \(previous == nil, privacy: .public)
             """
         )
         #endif
@@ -125,6 +185,9 @@ final class ClockViewModel {
     }
 
     private func reseed(_ display: Display, at date: Date) {
+        // Glyphs are scaled to the grid, so the digits are the same size on
+        // screen whether a cell is a chunky LED or a single device pixel.
+        let renderer = DigitRenderer(metrics: display.layout.metrics)
         let seed = renderer.seed(
             text: ClockText.string(for: date),
             columns: display.layout.columns,
@@ -135,6 +198,7 @@ final class ClockViewModel {
         // The ghost marks the seed cells themselves, so the digits stay
         // readable in place as Life eats them.
         display.rasterizer.setGhost(seed)
+        currentSeed = seed
         seededMinute = minuteIndex(of: date)
     }
 
@@ -150,16 +214,12 @@ final class ClockViewModel {
     /// Generations per second `elapsed` seconds into the minute.
     func rate(at elapsed: Double) -> Double {
         let sinceHold = elapsed - holdDuration
-        guard sinceHold >= rampDuration else {
-            // Smoothstep, so the ramp starts gently rather than lurching.
-            let progress = max(sinceHold / rampDuration, 0)
-            let eased = progress * progress * (3 - 2 * progress)
-            return startRate * pow(peakRate / startRate, eased)
-        }
+        guard sinceHold < rampDuration else { return peakRate }
 
-        let decayWindow = Self.minuteLength - holdDuration - rampDuration
-        let progress = min(max((sinceHold - rampDuration) / decayWindow, 0), 1)
-        return peakRate * pow(endRate / peakRate, progress)
+        // Smoothstep, so the ramp starts gently rather than lurching.
+        let progress = max(sinceHold / rampDuration, 0)
+        let eased = progress * progress * (3 - 2 * progress)
+        return startRate * pow(peakRate / startRate, eased)
     }
 
     private func secondsIntoMinute(_ date: Date) -> Double {
