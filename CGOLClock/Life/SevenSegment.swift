@@ -47,13 +47,18 @@ nonisolated struct SevenSegmentRenderer {
         0b1101111,  // 9
     ]
 
-    /// Draws `text` centred in a `columns` x `rows` bitmap. Characters other
-    /// than `0...9` and `:` advance the cursor without drawing, so a blank
-    /// leading hour in 12-hour time keeps the block from shifting sideways.
-    func seed(text: String, columns: Int, rows: Int) -> CellBitmap {
+    /// Draws `text` into a `columns` x `rows` bitmap with the centre of the
+    /// *drawn* glyphs at `centre`.
+    ///
+    /// Centring the drawn extent rather than a fixed five-slot block matters:
+    /// a single-digit hour would otherwise sit visibly right of centre.
+    /// Characters other than `0...9` and `:` advance the cursor without
+    /// drawing, so callers can still reserve blank slots if they want to.
+    func seed(text: String, columns: Int, rows: Int, centre: CellPoint) -> CellBitmap {
         var bitmap = CellBitmap(width: columns, height: rows)
-        let originX = (columns - metrics.blockWidth) / 2
-        let originY = (rows - metrics.blockHeight) / 2
+        let span = drawnSpan(of: text)
+        let originX = centre.x - span.width / 2 - span.start
+        let originY = centre.y - metrics.blockHeight / 2
 
         var x = originX
         for character in text {
@@ -70,6 +75,30 @@ nonisolated struct SevenSegmentRenderer {
             }
         }
         return bitmap
+    }
+
+    /// Where the drawn glyphs start relative to the first slot, and how wide
+    /// they are. Leading and trailing blank slots contribute nothing.
+    func drawnSpan(of text: String) -> (start: Int, width: Int) {
+        var offset = 0
+        var start: Int?
+        var end = 0
+
+        for character in text {
+            let glyphWidth: Int? = switch character {
+            case "0"..."9": metrics.digitWidth
+            case ":": metrics.colonWidth
+            default: nil
+            }
+            if let glyphWidth {
+                if start == nil { start = offset }
+                end = offset + glyphWidth
+            }
+            offset += (character == ":" ? metrics.colonWidth : metrics.digitWidth) + metrics.gap
+        }
+
+        guard let start else { return (0, 0) }
+        return (start, end - start)
     }
 
     private func draw(digit: Int, at x: Int, y: Int, into bitmap: inout CellBitmap) {
@@ -106,7 +135,8 @@ nonisolated struct SevenSegmentRenderer {
 nonisolated enum ClockText {
 
     /// `HH:MM` for `date`, honouring the locale's 12- or 24-hour preference.
-    /// In 12-hour locales a leading zero becomes a space so the digits stay put.
+    /// 12-hour times drop the leading zero entirely — the renderer centres
+    /// whatever it is given, so a narrower `9:45` still sits in the middle.
     static func string(for date: Date, locale: Locale = .current, calendar: Calendar = .current) -> String {
         var hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
@@ -114,8 +144,7 @@ nonisolated enum ClockText {
         if !uses24HourTime(locale: locale) {
             hour %= 12
             if hour == 0 { hour = 12 }
-            let hourText = hour < 10 ? " \(hour)" : "\(hour)"
-            return "\(hourText):\(twoDigits(minute))"
+            return "\(hour):\(twoDigits(minute))"
         }
         return "\(twoDigits(hour)):\(twoDigits(minute))"
     }

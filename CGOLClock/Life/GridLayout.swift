@@ -1,5 +1,11 @@
 import CoreGraphics
 
+/// A position in grid coordinates.
+nonisolated struct CellPoint: Equatable {
+    let x: Int
+    let y: Int
+}
+
 /// Works out how many cells fit on screen and how big each one is.
 ///
 /// The column count is fixed by the requirement that the `HH:MM` block occupy
@@ -26,5 +32,15 @@ nonisolated struct GridLayout: Equatable {
 
     var pixelSize: CGSize {
         CGSize(width: CGFloat(columns) * cellSize, height: CGFloat(rows) * cellSize)
+    }
+
+    /// The cell containing `point`, which is in view coordinates. Used to place
+    /// the clock at the centre of the safe area rather than the centre of the
+    /// screen, so the notch and home indicator don't push it off-centre.
+    func cell(at point: CGPoint) -> CellPoint {
+        CellPoint(
+            x: min(max(Int(point.x / cellSize), 0), columns - 1),
+            y: min(max(Int(point.y / cellSize), 0), rows - 1)
+        )
     }
 }
