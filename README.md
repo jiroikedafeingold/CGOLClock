@@ -44,17 +44,21 @@ Both axes wrap. Vertical wrap is modular row indexing; horizontal wrap is a rota
 the row's word array, which has to account for `width` not being a multiple of 64. That
 last part is where the bodies are buried, so it is tested directly.
 
-### Rendering is a memcpy plus one write per live cell
+### Rendering
 
-The grid is rasterised into a small `CGImage` — one `4x4` texel block per cell, with a
-`3x3` lit square inside it. The leftover row and column are the dark gutter that gives the
-LED-matrix look. The view then scales that image up with `.interpolation(.none)`, so the
-GPU does the magnification and the pixels stay hard-edged.
+The grid is rasterised into a small `CGImage` — one `8x8` texel block per cell, with a
+`6x6` square drawn inside it. The leftover row and column are the dark gutter that gives
+the LED-matrix look. The view then scales that image up with `.interpolation(.none)`, so
+the GPU does the magnification and the pixels stay hard-edged.
 
-The background and the static teal outline are baked into a template buffer once per
-minute. Rendering a generation is a `memcpy` of that template followed by one small write
-per live cell, found by walking set bits with `trailingZeroBitCount` rather than scanning
-columns.
+Each frame draws in three passes: background, then live cells as filled squares, then the
+ghost outline as one-texel hollow rings. The ring goes **last and is hollow**, so where a
+live cell lands on a ghost cell you see an amber square framed by a teal outline rather
+than the ghost being painted over. That ordering is why the outline can't be baked into a
+static template.
+
+Live cells are found by walking set bits with `trailingZeroBitCount` rather than scanning
+all 64 columns per word.
 
 Measured on an iPhone 17 Pro simulator in a Debug (`-Onone`) build: **~40µs** for the Life
 step and **~250µs** for the raster, per generation. At the peak rate of 10 generations a
@@ -101,6 +105,9 @@ Stroke thickness is two cells, deliberately. A one-cell-thick bar has too few ne
 to survive and evaporates in a single generation; at two cells thick the bars die back
 unevenly, shed gliders, and leave still-life blocks behind.
 
+The display is kept awake while the clock is on screen (`isIdleTimerDisabled`), released
+whenever the scene stops being active.
+
 ## Structure
 
 ```
@@ -121,7 +128,7 @@ Nothing below `ClockView` imports SwiftUI.
 
 ## Tests
 
-58 tests, Swift Testing. The ones worth knowing about:
+65 tests, Swift Testing. The ones worth knowing about:
 
 - **Cross-check against a naive implementation.** A dense pseudorandom soup is run for 30
   generations at widths 37, 64, 65, 76, 128 and 130 and compared cell-for-cell against a
@@ -134,11 +141,16 @@ Nothing below `ClockView` imports SwiftUI.
   corner and reappears at the top-left.
 - **Centring and pacing**, including that the rate is monotonic within each phase and
   never stalls or runs away.
+- **Rasterising**, by reading texels back out of the rendered `CGImage`: that a ghost cell
+  is a hollow ring with a dark centre, and that the ring stays teal while the interior
+  turns amber when a live cell shares the cell.
 
 ### Running them
 
 The test bundle is hosted by the app, and the `CGOLClockTests` scheme does not rebuild the
-app target. Build the `CGOLClock` scheme first, then run tests from `CGOLClockTests`:
+app target. **Always build the `CGOLClock` scheme first**, for the same destination — the
+tests run inside the app binary, so a stale one silently exercises old code rather than
+failing to link.
 
 ```
 xcodebuild -scheme CGOLClock     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build

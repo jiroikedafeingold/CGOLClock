@@ -8,9 +8,9 @@ import CoreGraphics
 /// a `litSize` square drawn inside it; the leftover row and column form the
 /// dark gutter that gives the LED-matrix look.
 ///
-/// The background and the static teal outline are baked into a template buffer
-/// once per minute, so rendering a generation is a memcpy plus one small write
-/// per live cell.
+/// Drawing order per frame is background, then live cells, then the ghost
+/// outline. The outline goes last and is stroked as a hollow ring rather than
+/// filled, so it stays visible even where a live cell occupies the same cell.
 nonisolated final class FrameRasterizer {
     let columns: Int
     let rows: Int
@@ -25,13 +25,15 @@ nonisolated final class FrameRasterizer {
     private let liveColor: UInt32
     private let outlineColor: UInt32
 
+    /// Row-major cell indices of the ghost outline, rebuilt once per minute.
+    private var outlineCells: [Int] = []
+
     private let frame: UnsafeMutablePointer<UInt32>
-    private let template: UnsafeMutablePointer<UInt32>
     private let context: CGContext
 
-    init(columns: Int, rows: Int, palette: Palette = .amberLED, texelsPerCell: Int = 4, litSize: Int = 3) {
+    init(columns: Int, rows: Int, palette: Palette = .amberLED, texelsPerCell: Int = 8, litSize: Int = 6) {
         precondition(columns > 0 && rows > 0, "grid must be non-empty")
-        precondition(litSize > 0 && litSize <= texelsPerCell, "lit square must fit its cell")
+        precondition(litSize >= 3 && litSize <= texelsPerCell, "lit square must fit its cell and have an interior")
 
         self.columns = columns
         self.rows = rows
@@ -46,9 +48,7 @@ nonisolated final class FrameRasterizer {
         self.outlineColor = palette.outlineOverBackground.packed
 
         frame = .allocate(capacity: texelCount)
-        template = .allocate(capacity: texelCount)
         frame.initialize(repeating: backgroundColor, count: texelCount)
-        template.initialize(repeating: backgroundColor, count: texelCount)
 
         guard
             let context = CGContext(
@@ -69,28 +69,27 @@ nonisolated final class FrameRasterizer {
 
     deinit {
         frame.deallocate()
-        template.deallocate()
     }
 
     var pixelSize: CGSize {
         CGSize(width: pixelWidth, height: pixelHeight)
     }
 
-    /// Rebuilds the static layer: background everywhere, plus the ghost outline
-    /// of the seed. Called once when the minute changes.
+    /// Records the ghost outline of the seed. Called once when the minute
+    /// changes; the cells are stroked afresh on every frame.
     func setOutline(_ outline: CellBitmap) {
         precondition(outline.width == columns && outline.height == rows, "size mismatch")
-        template.update(repeating: backgroundColor, count: texelCount)
+        outlineCells.removeAll(keepingCapacity: true)
         for y in 0..<rows {
             for x in 0..<columns where outline[x, y] {
-                fillCell(x: x, y: y, colour: outlineColor, into: template)
+                outlineCells.append(y * columns + x)
             }
         }
     }
 
     func image(for grid: LifeGrid) -> CGImage? {
         precondition(grid.width == columns && grid.height == rows, "size mismatch")
-        frame.update(from: template, count: texelCount)
+        frame.update(repeating: backgroundColor, count: texelCount)
 
         grid.withWords { words in
             let wordsPerRow = grid.wordsPerRow
@@ -102,24 +101,49 @@ nonisolated final class FrameRasterizer {
                     while word != 0 {
                         let column = wordIndex * 64 + word.trailingZeroBitCount
                         word &= word - 1
-                        fillCell(x: column, y: y, colour: liveColor, into: frame)
+                        fillCell(x: column, y: y)
                     }
                 }
             }
+        }
+
+        // Last, so a live cell underneath shows through the middle of the ring.
+        for cell in outlineCells {
+            strokeCell(x: cell % columns, y: cell / columns)
         }
 
         return context.makeImage()
     }
 
     @inline(__always)
-    private func fillCell(x: Int, y: Int, colour: UInt32, into buffer: UnsafeMutablePointer<UInt32>) {
+    private func fillCell(x: Int, y: Int) {
         let left = x * texelsPerCell
         let top = y * texelsPerCell
         for row in 0..<litSize {
             let base = (top + row) * pixelWidth + left
             for column in 0..<litSize {
-                buffer[base + column] = colour
+                frame[base + column] = liveColor
             }
+        }
+    }
+
+    /// One-texel hollow square on the same footprint as a filled cell.
+    @inline(__always)
+    private func strokeCell(x: Int, y: Int) {
+        let left = x * texelsPerCell
+        let top = y * texelsPerCell
+        let last = litSize - 1
+
+        let topRow = top * pixelWidth + left
+        let bottomRow = (top + last) * pixelWidth + left
+        for column in 0..<litSize {
+            frame[topRow + column] = outlineColor
+            frame[bottomRow + column] = outlineColor
+        }
+        for row in 1..<last {
+            let base = (top + row) * pixelWidth + left
+            frame[base] = outlineColor
+            frame[base + last] = outlineColor
         }
     }
 }

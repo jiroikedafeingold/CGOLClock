@@ -36,11 +36,15 @@ nonisolated struct Palette {
         background: RGB(0x0A, 0x08, 0x06),
         live: RGB(0xFF, 0xB0, 0x00),
         outline: RGB(0x34, 0xD3, 0xC8),
-        outlineOpacity: 0.16
+        outlineOpacity: 0.5
     )
 
     /// The outline already composited over the background, so the rasteriser
     /// writes opaque texels and never has to blend per frame.
+    ///
+    /// The opacity is tuned for a one-texel stroke, which reads far lighter
+    /// than a filled square would at the same value — and it has to stay
+    /// legible where it crosses a lit cell, not just the background.
     var outlineOverBackground: RGB {
         outline.blended(over: background, alpha: outlineOpacity)
     }
