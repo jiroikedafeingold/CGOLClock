@@ -269,7 +269,8 @@ final class ClockViewModel {
                 columns: layout.columns,
                 rows: layout.rows,
                 centre: clockCentre,
-                targetWidth: layout.clockWidth
+                targetWidth: layout.clockWidth,
+                maxHeight: layout.clockHeight
             )
         case .matrix:
             return DigitRenderer(metrics: layout.metrics, face: face).seed(

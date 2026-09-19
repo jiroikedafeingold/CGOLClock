@@ -17,20 +17,33 @@ nonisolated struct TypeRenderer {
     /// Draw only the glyph outlines rather than filled letterforms.
     var outlined = false
 
-    /// Draws `text` centred on `centre`, scaled so its ink is `targetWidth`
-    /// cells across.
-    func seed(text: String, columns: Int, rows: Int, centre: CellPoint, targetWidth: Int) -> CellBitmap {
+    /// Draws `text` centred on `centre`, as large as will fit inside
+    /// `targetWidth` by `maxHeight` cells.
+    func seed(
+        text: String,
+        columns: Int,
+        rows: Int,
+        centre: CellPoint,
+        targetWidth: Int,
+        maxHeight: Int
+    ) -> CellBitmap {
         var bitmap = CellBitmap(width: columns, height: rows)
         guard targetWidth > 0, !text.isEmpty else { return bitmap }
 
-        // Measure at a reference size, then scale to the width we want. Doing
-        // it by measurement rather than by point size keeps the clock the same
-        // width whichever face is chosen.
+        // Measure at a reference size, then scale to the box we want. Doing it
+        // by measurement rather than by point size keeps the clock the same
+        // size whichever face is chosen.
         let reference: CGFloat = 200
         let referenceInk = inkBounds(of: text, font: face.font(ofSize: reference))
         guard referenceInk.width > 0, referenceInk.height > 0 else { return bitmap }
 
-        let size = reference * CGFloat(targetWidth) / referenceInk.width
+        // Fit both ways. A narrow time scaled purely to the target width would
+        // stand taller than the screen.
+        let byWidth = reference * CGFloat(targetWidth) / referenceInk.width
+        let byHeight = maxHeight > 0
+            ? reference * CGFloat(maxHeight) / referenceInk.height
+            : byWidth
+        let size = min(byWidth, byHeight)
         let font = face.font(ofSize: size)
         let ink = inkBounds(of: text, font: font)
 

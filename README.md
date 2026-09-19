@@ -156,11 +156,11 @@ Scatter works at either.
 
 | Resolution | Grid (iPhone 17 Pro landscape) | Cell | Glyph scale |
 |---|---|---|---|
-| LED Matrix | 86 x 39 = 3,354 cells | 10.2 pt | 1 |
-| Pixel | 2622 x 1206 = 3,162,132 cells | 1 device pixel | 30 |
+| LED Matrix | 54 x 24 = 1,296 cells | 16.2 pt | 1 |
+| Pixel | 2622 x 1206 = 3,162,132 cells | 1 device pixel | 48 |
 
 Pixel resolution puts one cell on every device pixel and scales the font by the same
-factor so the clock stays exactly half the screen width. At one texel per cell there is no
+factor so the clock stays the same size on screen. At one texel per cell there is no
 room to draw a ghost ring around a live square, so a cell that is both takes a **blended
 colour** — an even mix of the two, landing on a hue belonging to neither.
 
@@ -169,16 +169,22 @@ system clock least of all.
 
 ### Layout
 
-The grid is always **86 columns**. That is not arbitrary: an `HH:MM` block is 43 cells
+The clock is fitted to **80% of the screen**, in both dimensions. Width alone isn't
+enough — a narrow time like `1:11` scaled to 80% of the width would stand taller than the
+screen — so the glyphs are scaled to whichever of the two constraints binds first. In
+practice width binds for five-glyph times like `10:48` and height binds for the narrowest
+four-glyph ones.
+
+In matrix resolution that fixes the grid at **54 columns**: an `HH:MM` block is 43 cells
 wide with the standard glyph metrics (four 8-wide digits, a 3-wide colon, four 2-wide
-gaps), so 86 columns puts the clock at exactly half the screen width. Cell size then falls
-out of the view width, which means a larger screen gets physically larger cells rather
-than more of them — the chunky look survives the jump from iPhone to iPad.
+gaps), and 43/54 is 80%. Cell size then falls out of the view width, which means a larger
+screen gets physically larger cells rather than more of them — the chunky look survives
+the jump from iPhone to iPad.
 
 | Device | Grid | Cell size |
 |---|---|---|
-| iPhone 17 Pro, landscape | 86 x 39 | 10.2 pt |
-| iPad Pro 13", landscape | 86 x 64 | 16.0 pt |
+| iPhone 17 Pro, landscape | 54 x 24 | 16.2 pt |
+| iPad Pro 13", landscape | 54 x 40 | 25.5 pt |
 
 Digits are centred on the **safe area**, not the raw screen, so the home indicator and
 Dynamic Island don't push them off-centre. They are also centred on their *drawn extent*
@@ -212,7 +218,7 @@ face names a real font — Avenir Next Heavy for Round, Menlo Bold for Block —
 `TypeRenderer` rasterises the time with Core Text at the grid's own resolution and
 thresholds it. The digits get genuine curves, and Life erodes a smooth shape rather than a
 staircase. The renderer measures the string at a reference size and scales to the
-requested cell width, so the clock stays half the screen wide whichever face is picked.
+requested box, so the clock stays the same size whichever face is picked.
 
 ### Pacing
 
